@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "joint-improvement"
+version = "0.0.1"
+description = "Official repository for Joint Improvement."
+authors = [{name = "Serra Korkmaz, Adam Izdebski", email = "adam.izdebski1@gmail.com"}]
+readme = "README.md"
+license = {text = "BSD-3-Clause"}
+requires-python = ">=3.10"
+dependencies = [
+  "torch>=2.2",
+  "torchvision>=0.17; platform_system != 'Windows'",
+  "transformers>=4.39",
+  "datasets>=2.18",
+  "accelerate>=0.28",
+  "omegaconf>=2.3",
+  "tqdm",
+  "numpy",
+  "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-xdist",
+    "ruff",
+    "black",
+    "pre-commit",
+    "mypy",
+    "nbstripout",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.black]
+line-length = 88
+
+[tool.ruff]
+line-length = 88
+select = ["E", "F", "I"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]

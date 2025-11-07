@@ -1,0 +1,38 @@
+repos:
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy
+        entry: mypy -p joint_improvement
+        language: system
+        always_run: true
+        pass_filenames: false
+
+      - id: ruff-check
+        name: ruff-check
+        entry: ruff check src/joint_improvement --fix
+        language: system
+        always_run: true
+        pass_filenames: false
+
+      - id: ruff-format
+        name: ruff-format
+        entry: ruff format
+        language: system
+        always_run: true
+        pass_filenames: false
+
+      - id: pytest
+        name: pytest
+        entry: pytest
+        language: system
+        always_run: true
+        pass_filenames: false
+
+      - id: nbstripout
+        name: nbstripout
+        entry: find . -name '*.ipynb' -exec nbstripout --drop-empty-cells --keep-output {} +
+        language: system
+        always_run: true
+        pass_filenames: false
+
