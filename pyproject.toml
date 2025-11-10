@@ -9,14 +9,14 @@ description = "Official repository for Joint Improvement."
 authors = [{name = "Serra Korkmaz, Adam Izdebski", email = "adam.izdebski1@gmail.com"}]
 readme = "README.md"
 license = {text = "BSD-3-Clause"}
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 dependencies = [
-  "torch>=2.2",
-  "torchvision>=0.17; platform_system != 'Windows'",
-  "transformers>=4.39",
-  "datasets>=2.18",
+  "torch>=2.9.0",
+  "torchvision>=0.18.0; platform_system != 'Windows'",
+  "transformers>=4.49.0",
+  "datasets>=2.18.0",
   "accelerate>=0.28",
-  "omegaconf>=2.3",
+  "omegaconf>=2.3.0",
   "tqdm",
   "numpy",
   "pyyaml>=6.0",
@@ -40,8 +40,78 @@ where = ["src"]
 line-length = 88
 
 [tool.ruff]
-line-length = 88
-select = ["E", "F", "I"]
+line-length = 120
+
+[tool.ruff.format]
+docstring-code-format = true
+
+[tool.ruff.lint]
+select = [
+    "F",      # Errors detected by Pyflakes
+    "E",      # Errors detected by Pycodestyle
+    "W",      # Warnings detected by Pycodestyle
+    "I",      # isort (import sorting)
+    "D",      # pydocstyle (docstring conventions)
+    "B",      # flake8-bugbear (common bugs and design issues)
+    "TID",    # flake8-tidy-imports (import restrictions)
+    "C4",     # flake8-comprehensions (list/set/dict comprehension improvements)
+    "BLE",    # flake8-blind-except (discourage bare except)
+    "UP",     # pyupgrade (syntax upgrades for newer Python versions)
+    "TCH",    # typing imports (prefer standard library typing)
+    "RUF100", # Report unused noqa directives
+]
+
+ignore = [
+    # Pycodestyle
+    "E501", # Line too long (we accept long comments; formatter handles code)
+    "E731", # Do not assign a lambda expression (we allow this for convenience)
+    "E741", # Ambiguous variable name "l", "O", or "I" (we allow "I" for identity matrices)
+
+    # Flake8-bugbear
+    "B008", # Do not perform function calls in default arguments (allowed when result is immutable)
+
+    # Pydocstyle — disable "missing docstring" checks (docstrings optional)
+    "D100", # Missing docstring in public module
+    "D101", # Missing docstring in public class
+    "D102", # Missing docstring in public method
+    "D103", # Missing docstring in public function
+    "D104", # Missing docstring in public package
+    "D105", # Missing docstring in magic method
+    "D106", # Missing docstring in public nested class
+    "D107", # Missing docstring in __init__
+
+    # Pydocstyle — stylistic rules we don't want
+    "D400", # First line should end with a period
+    "D401", # First line should be in imperative mood
+    "D203", # 1 blank line required before class docstring
+    "D212", # Enforces first-line docstring — disabled, since we prefer second-line
+    # "D213",  # Multi-line docstring should start on the second line
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
+# Ignore conda/micromamba cache directories
+norecursedirs = [".git", ".venv", "venv", "env", "Y", "pkgs", "conda-meta", ".conda", ".mamba", "__pycache__", ".pytest_cache", ".mypy_cache"]
+# Only search for tests in tests/ directory
+testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = false
+pretty = true
+show_column_numbers = true
+show_error_codes = true
+show_error_context = true
+ignore_missing_imports = true
+no_strict_optional = true
+warn_unused_configs = true
+# Exclude untracked/incomplete modules from type checking
+exclude = [
+    ".*/chemistry/.*",
+    ".*/metrics/.*",
+    ".*hf_trainer\\.py",
+    ".*/backbones/llama2\\.py",  # Has incomplete type annotations
+]

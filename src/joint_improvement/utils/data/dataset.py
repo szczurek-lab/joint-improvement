@@ -2,9 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Literal, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Literal
 
 from torch.utils.data import Dataset
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Sequence
 
 
 @dataclass
@@ -28,11 +31,11 @@ class SequenceDatasetConfig:
 
     """
 
-    data_path: Optional[Path | str] = None
-    sequence_key: Optional[str] = None
-    target_key: Optional[str] = None
-    transforms: Optional[Sequence[dict[str, Any]]] = None
-    target_transforms: Optional[Sequence[dict[str, Any]]] = None
+    data_path: Path | str | None = None
+    sequence_key: str | None = None
+    target_key: str | None = None
+    transforms: Sequence[dict[str, Any]] | None = None
+    target_transforms: Sequence[dict[str, Any]] | None = None
 
 
 class SequenceDataset(Dataset):
@@ -49,10 +52,8 @@ class SequenceDataset(Dataset):
         self,
         sequences: Sequence[str],
         targets: Sequence[float | int],
-        transforms: Optional[Sequence[Callable[[str], str]]] = None,
-        target_transforms: Optional[
-            Sequence[Callable[[float | int], float | int]]
-        ] = None,
+        transforms: Sequence[Callable[[str], str]] | None = None,
+        target_transforms: Sequence[Callable[[float | int], float | int]] | None = None,
     ) -> None:
         """Initialize SequenceDataset.
 
@@ -71,17 +72,14 @@ class SequenceDataset(Dataset):
             Optional sequence of transforms applied to each target during `__getitem__`.
             Transforms are applied in order.
 
-        Raises
+        Raises:
         ------
         ValueError
             If `sequences` and `targets` have different lengths.
 
-        Examples
+        Examples:
         --------
-        >>> dataset = SequenceDataset(
-        ...     sequences=["ACDEFGHIK", "LMNPQRSTV"],
-        ...     targets=[0.5, 0.8]
-        ... )
+        >>> dataset = SequenceDataset(sequences=["ACDEFGHIK", "LMNPQRSTV"], targets=[0.5, 0.8])
         """
         if len(sequences) != len(targets):
             raise ValueError("`sequences` and `targets` must have the same length.")
@@ -94,7 +92,7 @@ class SequenceDataset(Dataset):
     def __len__(self) -> int:
         """Return the number of samples in the dataset.
 
-        Returns
+        Returns:
         -------
         int
             Number of samples.
@@ -109,14 +107,14 @@ class SequenceDataset(Dataset):
         index : int
             Index of the sample to retrieve (0-based).
 
-        Returns
+        Returns:
         -------
         dict[str, float | int | str]
             Dictionary containing:
             - `SEQUENCE_FIELD`: The sequence (possibly transformed)
             - `TARGET_FIELD`: The target (possibly transformed)
 
-        Examples
+        Examples:
         --------
         >>> dataset = SequenceDataset(sequences=["ACDEFGHIK"], targets=[0.5])
         >>> sample = dataset[0]
@@ -126,15 +124,15 @@ class SequenceDataset(Dataset):
         0.5
         """
         sequence = self._sequences[index]
-        target = self._targets[index]
+        target: float | int = self._targets[index]
 
         if self.transforms is not None:
             for transform in self.transforms:
                 sequence = transform(sequence)
 
         if self.target_transforms is not None:
-            for transform in self.target_transforms:
-                target = transform(target)
+            for target_transform in self.target_transforms:
+                target = target_transform(target)  # type: ignore[assignment, arg-type]
 
         return {
             self.SEQUENCE_FIELD: sequence,
@@ -145,9 +143,9 @@ class SequenceDataset(Dataset):
     def from_config(
         cls,
         config: SequenceDatasetConfig,
-        root: Optional[Path | str] = None,
-        split: Optional[Literal["train", "val", "test"]] = None,
-        seed: Optional[int] = None,
+        root: Path | str | None = None,
+        split: Literal["train", "val", "test"] | None = None,
+        seed: int | None = None,
     ) -> SequenceDataset:
         """Create a SequenceDataset from a configuration.
 
@@ -165,10 +163,10 @@ class SequenceDataset(Dataset):
             Random seed value. Required if `data_path` contains `{seed}` placeholder.
             Replaces `{seed}` with the seed value.
 
-        Returns
+        Returns:
         -------
         SequenceDataset
-        
+
         """
         from .data_io import load_npz_data
         from .target_transforms import create_target_transform
@@ -194,18 +192,14 @@ class SequenceDataset(Dataset):
         targets = data.get(config.target_key) if config.target_key else None
 
         if config.sequence_key and sequences is None:
-            raise ValueError(
-                f"Sequence key '{config.sequence_key}' not found in loaded data"
-            )
+            raise ValueError(f"Sequence key '{config.sequence_key}' not found in loaded data")
         if config.target_key and targets is None:
-            raise ValueError(
-                f"Target key '{config.target_key}' not found in loaded data"
-            )
+            raise ValueError(f"Target key '{config.target_key}' not found in loaded data")
 
         if sequences is None:
             raise ValueError("sequence_key must be provided in config")
 
-        transforms = None
+        transforms: list[Callable[[str], str]] | None = None
         if config.transforms:
             # TODO: Implement create_transform when transforms module is populated
             transforms = []
@@ -213,8 +207,7 @@ class SequenceDataset(Dataset):
         target_transforms = None
         if config.target_transforms:
             target_transforms = [
-                create_target_transform(config=transform_config)
-                for transform_config in config.target_transforms
+                create_target_transform(config=transform_config) for transform_config in config.target_transforms
             ]
 
         return cls(
@@ -227,9 +220,9 @@ class SequenceDataset(Dataset):
 
 def _resolve_data_path(
     data_path: Path | str,
-    split: Optional[Literal["train", "val", "test"]] = None,
-    root: Optional[Path | str] = None,
-    seed: Optional[int] = None,
+    split: Literal["train", "val", "test"] | None = None,
+    root: Path | str | None = None,
+    seed: int | None = None,
 ) -> Path:
     """Resolve data path by replacing placeholders with actual values.
 
@@ -249,12 +242,12 @@ def _resolve_data_path(
         Random seed value. Required if `data_path` contains `seed_{seed}` placeholder.
         Replaces `seed_{seed}` with `seed_{seed_value}`.
 
-    Returns
+    Returns:
     -------
     Path
         Resolved data path with all placeholders replaced.
 
-    Raises
+    Raises:
     ------
     ValueError
         If required placeholders are missing when corresponding parameters are provided.
@@ -264,17 +257,13 @@ def _resolve_data_path(
     if seed is not None:
         placeholder = "{seed}"
         if placeholder not in data_path_str:
-            raise ValueError(
-                f"data_path must contain {placeholder} as a placeholder when seed is provided. "
-            )
+            raise ValueError(f"data_path must contain {placeholder} as a placeholder when seed is provided. ")
         data_path_str = data_path_str.replace(placeholder, f"{seed}")
 
     if split is not None:
         placeholder = "{split}"
         if placeholder not in data_path_str:
-            raise ValueError(
-                f"data_path must contain {placeholder} as a placeholder when split is provided. "
-            )
+            raise ValueError(f"data_path must contain {placeholder} as a placeholder when split is provided. ")
         data_path_str = data_path_str.replace(placeholder, split)
 
     data_path = Path(data_path_str)

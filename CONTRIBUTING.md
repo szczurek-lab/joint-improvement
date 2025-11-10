@@ -1,33 +1,34 @@
 # Contributing Guidelines
 
-This document describes the minimal workflow for parallel development.
+## Setup
 
-## 1. Environment & Tooling
-- Create the shared micromamba environment via `environment.yml` or `scripts/setup_env.sh`.
-- Install development dependencies: `pip install -e .[dev]` inside the activated environment so local edits reflect immediately.
-- Install `pre-commit` hooks: `pre-commit install` to run quality checks before every commit.
+Run the setup script (creates environment, installs dependencies, and sets up pre-commit hooks):
 
-### Pre-commit Hooks
-The repository uses pre-commit hooks to ensure code quality:
-- **mypy**: Type checking for `joint_improvement` package
-- **ruff-check**: Linting with auto-fix for `src/joint_improvement`
-- **ruff-format**: Code formatting
-- **pytest**: Run all tests
-- **nbstripout**: Clean Jupyter notebooks (remove outputs and empty cells)
+```bash
+scripts/setup_env.sh
+```
 
-Run hooks manually: `pre-commit run --all-files`
+## Pre-commit Hooks
 
-## 2. Branching & Pull Requests
-- Base all work off `main`; create feature branches named `feature/<topic>` or `fix/<topic>`.
-- Keep PRs focused and small (prefer <300 LOC changed) to reduce merge conflicts.
-- Rebase on `main` before opening a PR to ensure a linear history; resolve conflicts locally.
-- Require approval from one teammate before merging; use GitHub's draft PRs for early feedback.
+Hooks run automatically on `git commit`. Check before committing:
 
-## 3. Testing & Quality Gates
-- Run `pre-commit run --all-files` and `pytest` (including the tiny overfit smoke test) prior to pushing.
-- For changes affecting Hugging Face integration, run `python -m joint_improvement.hf_trainer --config configs/hf_imdb.yaml` with the small debug config.
+```bash
+pre-commit run
+```
 
-## 4. Communication & Reviews
-- Keep PR descriptions concise but complete: motivation, key changes, validation steps.
-- Use review comments to highlight assumptions or TODOs; follow up after merging.
-- For breaking changes, outline a migration note in the PR and link it in README if user-facing.
+**Fixing ruff issues:**
+```bash
+ruff check --fix src/joint_improvement  # Auto-fix linting
+ruff format                              # Format code
+```
+
+## Workflow
+
+1. Open an issue describing the change
+2. Create branch from `main`
+3. Make commits (run `pre-commit run` before each commit)
+4. Before pushing: `pre-commit run --all-files` (includes pytest)
+5. **Rebase on `main` BEFORE pushing:** `git rebase main` (keeps history clean)
+6. Push branch: `git push origin <branch-name>`
+7. Open PR (link to issue)
+8. Keep PRs focused (<300 LOC)

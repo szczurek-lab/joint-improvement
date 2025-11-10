@@ -136,6 +136,7 @@ celerybeat.pid
 
 # Environments
 .env
+.env.*
 .envrc
 .venv
 env/
@@ -143,6 +144,16 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+*.env
+*.env.local
+*.env.*.local
+
+# Conda/Micromamba cache and environments
+Y/
+pkgs/
+conda-meta/
+.conda/
+.mamba/
 
 # Spyder project settings
 .spyderproject
@@ -205,3 +216,8 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# YAML files (user-specific or generated)
+# Keep configs/*.yaml and environment.yml
+*.yaml.local
+*.yml.local

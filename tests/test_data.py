@@ -22,13 +22,14 @@ def test_sequence_dataset_basic_access():
 
 def test_sequence_dataset_applies_transforms():
     """Test that transforms are applied correctly."""
+
     def fake_tokenizer(text: str) -> str:
         return text.upper()
 
     sequences = ["hi"]
     targets = [0]
     target_transform = lambda value: value + 1
-    
+
     dataset = SequenceDataset(
         sequences=sequences,
         targets=targets,
