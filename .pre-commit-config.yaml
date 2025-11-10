@@ -5,12 +5,12 @@ repos:
         name: mypy
         entry: bash -c 'files=$(git diff --cached --name-only --diff-filter=ACM | grep "\.py$"); if [ -z "$files" ]; then exit 0; fi; mypy $files'
         language: system
-        types: [python]
+        always_run: true
         pass_filenames: false
 
       - id: ruff-check
         name: ruff-check
-        entry: ruff check --fix
+        entry: bash -c 'files=$(git diff --cached --name-only --diff-filter=ACM | grep "\.py$"); [ -z "$files" ] || ruff check --fix $files'
         language: system
         types: [python]
 
@@ -22,7 +22,7 @@ repos:
 
       - id: pytest
         name: pytest
-        entry: pytest tests/ -x --tb=short -p no:xdist
+        entry: bash -c 'PYTHONPATH=src pytest tests/ -x --tb=short -p no:xdist'
         language: system
         always_run: true
         pass_filenames: false
@@ -32,4 +32,3 @@ repos:
         entry: nbstripout --drop-empty-cells --keep-output
         language: system
         types: [jupyter]
-

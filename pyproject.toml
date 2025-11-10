@@ -1,6 +1,6 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
 [project]
 name = "joint-improvement"
@@ -12,7 +12,6 @@ license = {text = "BSD-3-Clause"}
 requires-python = ">=3.12"
 dependencies = [
   "torch>=2.9.0",
-  "torchvision>=0.18.0; platform_system != 'Windows'",
   "transformers>=4.49.0",
   "datasets>=2.18.0",
   "accelerate>=0.28",
@@ -24,20 +23,14 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "pytest",
-    "pytest-xdist",
-    "ruff",
-    "black",
-    "pre-commit",
     "mypy",
     "nbstripout",
+    "pre-commit>=3.0.0",
+    "pytest",
+    "pytest-cov",
+    "pytest-xdist",
+    "ruff"
 ]
-
-[tool.setuptools.packages.find]
-where = ["src"]
-
-[tool.black]
-line-length = 88
 
 [tool.ruff]
 line-length = 120
@@ -70,7 +63,7 @@ ignore = [
     # Flake8-bugbear
     "B008", # Do not perform function calls in default arguments (allowed when result is immutable)
 
-    # Pydocstyle — disable "missing docstring" checks (docstrings optional)
+    # Pydocstyle — disable “missing docstring” checks (docstrings optional)
     "D100", # Missing docstring in public module
     "D101", # Missing docstring in public class
     "D102", # Missing docstring in public method
@@ -91,15 +84,7 @@ ignore = [
 [tool.ruff.lint.pydocstyle]
 convention = "google"
 
-[tool.pytest.ini_options]
-pythonpath = ["src"]
-# Ignore conda/micromamba cache directories
-norecursedirs = [".git", ".venv", "venv", "env", "Y", "pkgs", "conda-meta", ".conda", ".mamba", "__pycache__", ".pytest_cache", ".mypy_cache"]
-# Only search for tests in tests/ directory
-testpaths = ["tests"]
-
 [tool.mypy]
-python_version = "3.12"
 strict = false
 pretty = true
 show_column_numbers = true
@@ -107,11 +92,14 @@ show_error_codes = true
 show_error_context = true
 ignore_missing_imports = true
 no_strict_optional = true
-warn_unused_configs = true
-# Exclude untracked/incomplete modules from type checking
-exclude = [
-    ".*/chemistry/.*",
-    ".*/metrics/.*",
-    ".*hf_trainer\\.py",
-    ".*/backbones/llama2\\.py",  # Has incomplete type annotations
-]
+
+
+[tool.hatch.build.targets.sdist]
+exclude = ["docs", "docs/**"]
+
+[tool.hatch.build.targets.wheel]
+exclude = ["docs", "docs/**"]
+
+[tool.coverage.run]
+branch = true
+omit = ["*/.conda/*", "*/tests/*", "*/.Y/*"]
