@@ -71,7 +71,10 @@ ignore = [
     # Flake8-bugbear
     "B008", # Do not perform function calls in default arguments (allowed when result is immutable)
 
-    # Pydocstyle — disable “missing docstring” checks (docstrings optional)
+    # Flake8-blind-except
+    "BLE001", # Do not catch bare `except` (allowed for optional dependency handling)
+
+    # Pydocstyle — disable "missing docstring" checks (docstrings optional)
     "D100", # Missing docstring in public module
     "D101", # Missing docstring in public class
     "D102", # Missing docstring in public method
