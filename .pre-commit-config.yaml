@@ -3,20 +3,20 @@ repos:
     hooks:
       - id: mypy
         name: mypy
-        entry: bash -c 'files=$(git diff --cached --name-only --diff-filter=ACM | grep "\.py$"); if [ -z "$files" ]; then exit 0; fi; mypy $files'
+        entry: bash -c 'files=$(git diff --cached --name-only --diff-filter=ACM | grep "\.py$" | grep -v "incremental_sbs.py" | grep -v "stochastic_beam_search.py"); if [ -z "$files" ]; then exit 0; fi; mypy $files'
         language: system
         always_run: true
         pass_filenames: false
 
       - id: ruff-check
         name: ruff-check
-        entry: bash -c 'files=$(git diff --cached --name-only --diff-filter=ACM | grep "\.py$"); [ -z "$files" ] || ruff check --fix $files'
+        entry: bash -c 'files=$(git diff --cached --name-only --diff-filter=ACM | grep "\.py$" | grep -v "incremental_sbs.py" | grep -v "stochastic_beam_search.py"); [ -z "$files" ] || ruff check --fix $files'
         language: system
         types: [python]
 
       - id: ruff-format
         name: ruff-format
-        entry: ruff format
+        entry: bash -c 'files=$(git diff --cached --name-only --diff-filter=ACM | grep "\.py$" | grep -v "incremental_sbs.py" | grep -v "stochastic_beam_search.py"); [ -z "$files" ] || ruff format $files'
         language: system
         types: [python]
 

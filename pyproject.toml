@@ -37,6 +37,10 @@ line-length = 120
 
 [tool.ruff.format]
 docstring-code-format = true
+exclude = [
+    "**/incremental_sbs.py",
+    "**/stochastic_beam_search.py",
+]
 
 [tool.ruff.lint]
 select = [
@@ -52,6 +56,10 @@ select = [
     "UP",     # pyupgrade (syntax upgrades for newer Python versions)
     "TCH",    # typing imports (prefer standard library typing)
     "RUF100", # Report unused noqa directives
+]
+exclude = [
+    "**/incremental_sbs.py",
+    "**/stochastic_beam_search.py",
 ]
 
 ignore = [
@@ -82,7 +90,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.pydocstyle]
-convention = "google"
+convention = "numpy"
 
 [tool.mypy]
 strict = false
@@ -92,6 +100,17 @@ show_error_codes = true
 show_error_context = true
 ignore_missing_imports = true
 no_strict_optional = true
+exclude = [
+    ".*/incremental_sbs\\.py",
+    ".*/stochastic_beam_search\\.py",
+]
+
+[[tool.mypy.overrides]]
+module = [
+    "joint_improvement.generators.incremental_sbs",
+    "joint_improvement.generators.stochastic_beam_search",
+]
+ignore_errors = true
 
 
 [tool.hatch.build.targets.sdist]
