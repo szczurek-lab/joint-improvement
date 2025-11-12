@@ -110,10 +110,11 @@ exclude = [
 
 [[tool.mypy.overrides]]
 module = [
-    "joint_improvement.generators.incremental_sbs",
-    "joint_improvement.generators.stochastic_beam_search",
+    "joint_improvement.generators.utils.incremental_sbs",
+    "joint_improvement.generators.utils.stochastic_beam_search"
 ]
 ignore_errors = true
+follow_imports = "skip"
 
 
 [tool.hatch.build.targets.sdist]
