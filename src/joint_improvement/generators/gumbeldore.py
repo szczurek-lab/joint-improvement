@@ -107,11 +107,7 @@ class GumbeldoreMixin(BaseSearchMixin):
         beam_width: int = 32,
         num_rounds: int = 4,
         advantage_constant: float = 1.0,
-        min_max_normalize_advantage: bool = False,
-        expected_value_use_simple_mean: bool = False,
-        use_pure_outcomes: bool = False,
-        normalize_advantage_by_visit_count: bool = False,
-        perform_first_round_deterministic: bool = False,
+        normalize_advantage_value: bool = True,
         min_nucleus_top_p: float = 1.0,
     ) -> torch.FloatTensor:
         """Generate sequences using incremental stochastic beam search.
@@ -145,16 +141,8 @@ class GumbeldoreMixin(BaseSearchMixin):
             Number of SBS rounds, where we update the log-probs after each round.
         advantage_constant : float
             Constant for advantage calculation in Gumbeldore.
-        min_max_normalize_advantage : bool
-            Whether to min-max normalize advantages.
-        expected_value_use_simple_mean : bool
-            Whether to use simple mean for expected value calculation.
-        use_pure_outcomes : bool
-            Whether to use pure outcomes (without log probabilities).
-        normalize_advantage_by_visit_count : bool
-            Whether to normalize advantage by visit count.
-        perform_first_round_deterministic : bool
-            Whether to perform first round deterministically.
+        normalize_advantage_value : bool
+            Min-max normalize advantage values, to set the highest/lowest advantage to 1/-1.
         min_nucleus_top_p : float
             Minimum nucleus (top-p) sampling parameter.
 
@@ -196,11 +184,11 @@ class GumbeldoreMixin(BaseSearchMixin):
             num_rounds=num_rounds,
             log_prob_update_type="gumbeldore",
             advantage_constant=advantage_constant,
-            min_max_normalize_advantage=min_max_normalize_advantage,
-            expected_value_use_simple_mean=expected_value_use_simple_mean,
-            use_pure_outcomes=use_pure_outcomes,
-            normalize_advantage_by_visit_count=normalize_advantage_by_visit_count,
-            perform_first_round_deterministic=perform_first_round_deterministic,
+            min_max_normalize_advantage=normalize_advantage_value,
+            expected_value_use_simple_mean=False,
+            use_pure_outcomes=False,
+            normalize_advantage_by_visit_count=False,
+            perform_first_round_deterministic=False,
             min_nucleus_top_p=min_nucleus_top_p,
             return_round_info=False,
         )
