@@ -1,17 +1,9 @@
 name: joint-improvement
 channels:
-  - pytorch
-  - nvidia  # remove if targeting CPU-only setup
   - conda-forge
 dependencies:
   - python=3.10
-  - pytorch=2.2
-  - torchvision=0.17
-  - cudatoolkit=12.1  # drop for CPU installs
   - pip
-  - pip:
-      - -e .[dev]
-      - transformers>=4.39
-      - datasets>=2.18
-      - accelerate>=0.28
-      - pyyaml>=6.0
+  # All Python dependencies installed via setup script:
+  # 1. PyTorch with CUDA 12.6
+  # 2. Project package with required dependencies (-e .[dev])

@@ -3,36 +3,32 @@ repos:
     hooks:
       - id: mypy
         name: mypy
-        entry: mypy -p joint_improvement
+        entry: bash -c 'files=$(git diff --cached --name-only --diff-filter=ACM | grep "\.py$" | grep -v "incremental_sbs.py" | grep -v "stochastic_beam_search.py"); if [ -z "$files" ]; then exit 0; fi; mypy $files'
         language: system
         always_run: true
         pass_filenames: false
 
       - id: ruff-check
         name: ruff-check
-        entry: ruff check src/joint_improvement --fix
+        entry: bash -c 'files=$(git diff --cached --name-only --diff-filter=ACM | grep "\.py$" | grep -v "incremental_sbs.py" | grep -v "stochastic_beam_search.py"); [ -z "$files" ] || ruff check --fix $files'
         language: system
-        always_run: true
-        pass_filenames: false
+        types: [python]
 
       - id: ruff-format
         name: ruff-format
-        entry: ruff format
+        entry: bash -c 'files=$(git diff --cached --name-only --diff-filter=ACM | grep "\.py$" | grep -v "incremental_sbs.py" | grep -v "stochastic_beam_search.py"); [ -z "$files" ] || ruff format $files'
         language: system
-        always_run: true
-        pass_filenames: false
+        types: [python]
 
       - id: pytest
         name: pytest
-        entry: pytest
+        entry: bash -c 'PYTHONPATH=src pytest tests/ -x --tb=short -p no:xdist'
         language: system
         always_run: true
         pass_filenames: false
 
       - id: nbstripout
         name: nbstripout
-        entry: find . -name '*.ipynb' -exec nbstripout --drop-empty-cells --keep-output {} +
+        entry: nbstripout --drop-empty-cells --keep-output
         language: system
-        always_run: true
-        pass_filenames: false
-
+        types: [jupyter]

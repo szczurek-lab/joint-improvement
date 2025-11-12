@@ -6,9 +6,12 @@ normalizing and scaling target values in chemistry ML datasets.
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 class StandardScaler:
@@ -17,7 +20,7 @@ class StandardScaler:
     Transforms targets to have zero mean and unit variance. Useful for regression
     tasks where targets have different scales or distributions.
 
-    Examples
+    Examples:
     --------
     >>> import numpy as np
     >>> targets = [10.0, 20.0, 30.0, 40.0, 50.0]
@@ -49,7 +52,7 @@ class StandardScaler:
         value : float | int
             Target value to transform.
 
-        Returns
+        Returns:
         -------
         float
             Standardized target value.
@@ -64,7 +67,7 @@ class StandardScaler:
         value : float
             Standardized value to transform back.
 
-        Returns
+        Returns:
         -------
         float
             Value in original scale.
@@ -74,7 +77,7 @@ class StandardScaler:
     def to_dict(self) -> dict[str, Any]:
         """Serialize scaler to dictionary.
 
-        Returns
+        Returns:
         -------
         dict[str, Any]
             Dictionary containing transform type and parameters.
@@ -94,12 +97,12 @@ class StandardScaler:
         config : dict[str, Any]
             Configuration dictionary with "mean" and "std" keys.
 
-        Returns
+        Returns:
         -------
         StandardScaler
             Scaler instance created from config.
 
-        Examples
+        Examples:
         --------
         >>> config = {"type": "standard", "mean": 25.0, "std": 10.0}
         >>> scaler = StandardScaler.from_dict(config)
@@ -117,7 +120,7 @@ class StandardScaler:
         targets : list[float | int] | np.ndarray
             Target values to compute statistics from.
 
-        Returns
+        Returns:
         -------
         StandardScaler
             Fitted scaler instance.
@@ -150,17 +153,17 @@ def create_target_transform(
         Configuration dictionary. If provided, transform_type is ignored.
         Dictionary should have "type": "standard", "mean", and "std" keys.
 
-    Returns
+    Returns:
     -------
     Callable[[float | int], float]
         Target transform function.
 
-    Raises
+    Raises:
     ------
     ValueError
         If transform_type is not recognized or targets are required but not provided.
 
-    Examples
+    Examples:
     --------
     Using string type with targets:
     >>> targets = [10.0, 20.0, 30.0]
@@ -181,10 +184,7 @@ def create_target_transform(
         if transform_type_str == "standard":
             return StandardScaler.from_dict(transform_config)
         else:
-            raise ValueError(
-                f"Unknown transform type '{transform_type_str}' in config. "
-                "Supported type: 'standard'"
-            )
+            raise ValueError(f"Unknown transform type '{transform_type_str}' in config. Supported type: 'standard'")
 
     # Handle string-based creation
     if transform_type is None:
@@ -195,7 +195,4 @@ def create_target_transform(
             raise ValueError("targets must be provided for 'standard' transform")
         return StandardScaler.fit(targets)
     else:
-        raise ValueError(
-            f"Unknown transform_type '{transform_type}'. "
-            "Supported type: 'standard'"
-        )
+        raise ValueError(f"Unknown transform_type '{transform_type}'. Supported type: 'standard'")

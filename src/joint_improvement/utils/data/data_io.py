@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
 from loguru import logger
@@ -11,8 +11,8 @@ from loguru import logger
 
 def load_npz_data(
     path: Path | str,
-    sequence_key: Optional[str] = None,
-    target_key: Optional[str] = None,
+    sequence_key: str | None = None,
+    target_key: str | None = None,
     verbose: bool = False,
     **additional_keys: Any,
 ) -> dict[str, Any]:
@@ -32,19 +32,19 @@ def load_npz_data(
         Additional keys to load from the NPZ archive. Each keyword argument
         name should be the key name in the NPZ file.
 
-    Returns
+    Returns:
     -------
     dict[str, Any]
         Dictionary containing all loaded data.
 
-    Raises
+    Raises:
     ------
     FileNotFoundError
         If the specified path does not exist.
     KeyError
         If any specified key (sequence_key, target_key, or additional_keys) is not found in the archive.
 
-    Examples
+    Examples:
     --------
     >>> data = load_npz_data(
     ...     "data.npz",
@@ -64,40 +64,28 @@ def load_npz_data(
     # Load sequences, if requested
     if sequence_key is not None:
         if sequence_key not in data:
-            raise KeyError(
-                f"Sequence key '{sequence_key}' not found in {path}. Available keys: {list(data.keys())}"
-            )
+            raise KeyError(f"Sequence key '{sequence_key}' not found in {path}. Available keys: {list(data.keys())}")
         arr = data[sequence_key]
         if verbose:
-            logger.info(
-                f"Loaded '{sequence_key}': length={len(arr)}, dtype={arr.dtype}, shape={arr.shape}"
-            )
+            logger.info(f"Loaded '{sequence_key}': length={len(arr)}, dtype={arr.dtype}, shape={arr.shape}")
         result[sequence_key] = arr.tolist()
 
     # Load targets, if requested
     if target_key is not None:
         if target_key not in data:
-            raise KeyError(
-                f"Target key '{target_key}' not found in {path}. Available keys: {list(data.keys())}"
-            )
+            raise KeyError(f"Target key '{target_key}' not found in {path}. Available keys: {list(data.keys())}")
         arr = data[target_key]
         if verbose:
-            logger.info(
-                f"Loaded '{target_key}': length={len(arr)}, dtype={arr.dtype}, shape={arr.shape}"
-            )
+            logger.info(f"Loaded '{target_key}': length={len(arr)}, dtype={arr.dtype}, shape={arr.shape}")
         result[target_key] = arr.tolist()
 
     # Load additional keys
     for key_name in additional_keys.keys():
         if key_name not in data:
-            raise KeyError(
-                f"Additional key '{key_name}' not found in {path}. Available keys: {list(data.keys())}"
-            )
+            raise KeyError(f"Additional key '{key_name}' not found in {path}. Available keys: {list(data.keys())}")
         arr = data[key_name]
         if verbose:
-            logger.info(
-                f"Loaded '{key_name}': length={len(arr)}, dtype={arr.dtype}, shape={arr.shape}"
-            )
+            logger.info(f"Loaded '{key_name}': length={len(arr)}, dtype={arr.dtype}, shape={arr.shape}")
         result[key_name] = arr
 
     return result
@@ -116,27 +104,21 @@ def save_npz_data(path: Path | str, data: dict[str, Any], verbose: bool = False)
     verbose : bool, default=False
         If True, log summary information (length, dtype, shape) for each array being saved.
 
-    Examples
+    Examples:
     --------
     >>> import numpy as np
     >>> from pathlib import Path
     >>> save_npz_data(
-    ...     Path("data.npz"),
-    ...     {"sequences": np.array(["ACDEFGHIK", "LMNPQRSTV"]), "targets": np.array([0.5, 0.8])}
+    ...     Path("data.npz"), {"sequences": np.array(["ACDEFGHIK", "LMNPQRSTV"]), "targets": np.array([0.5, 0.8])}
     ... )
-    >>> save_npz_data(
-    ...     "output.npz",
-    ...     {"sequences": np.array(["ACDEFGHIK"]), "targets": np.array([0.5])}
-    ... )
+    >>> save_npz_data("output.npz", {"sequences": np.array(["ACDEFGHIK"]), "targets": np.array([0.5])})
     """
     path = Path(path)
-    
+
     # Log summary of data being saved
     if verbose:
         for key, value in data.items():
             arr = np.asarray(value)
-            logger.info(
-                f"Saving '{key}': length={len(arr)}, dtype={arr.dtype}, shape={arr.shape}"
-            )
-    
+            logger.info(f"Saving '{key}': length={len(arr)}, dtype={arr.dtype}, shape={arr.shape}")
+
     np.savez(path, **data)
