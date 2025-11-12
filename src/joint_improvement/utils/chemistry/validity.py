@@ -1,9 +1,15 @@
 """Validity check utilities for molecular properties."""
 
 try:
-    from rdkit import Chem
+    from rdkit import Chem, RDLogger
+
+    # Suppress RDKit warnings
+    RDLogger.DisableLog("rdApp.*")  # type: ignore[attr-defined]
+
+    _RDKIT_AVAILABLE = True
 except ImportError:
     Chem = None
+    RDLogger = None
     _RDKIT_AVAILABLE = False
 
 
@@ -40,7 +46,8 @@ def calculate_validity(smiles: str) -> bool:
             "Install it with: pip install rdkit "
             "or conda install -c conda-forge rdkit"
         )
-
-    mol = Chem.MolFromSmiles(smiles)
-    is_valid = smiles != "" and mol is not None and mol.GetNumAtoms() > 0
-    return is_valid
+    try:
+        mol = Chem.MolFromSmiles(smiles)
+        return smiles != "" and mol is not None and mol.GetNumAtoms() > 0
+    except:  # noqa: E722
+        return False
