@@ -28,7 +28,13 @@ ruff format                              # Format code
 2. Create branch from `main`
 3. Make commits (run `pre-commit run` before each commit)
 4. Before pushing: `pre-commit run --all-files` (includes pytest)
-5. **Rebase on `main` BEFORE pushing:** `git rebase main` (keeps history clean)
+5. **Rebase on `main` BEFORE pushing:**
+    ```
+    git fetch origin
+    git rebase origin/main
+    # resolve conflicts if needed
+    git push origin my-feature-branch
+    ```
 6. Push branch: `git push origin <branch-name>`
 7. Open PR (link to issue)
 8. Keep PRs focused (<300 LOC)
