@@ -9,7 +9,7 @@ description = "Official repository for Joint Improvement."
 authors = [{name = "Serra Korkmaz, Adam Izdebski", email = "adam.izdebski1@gmail.com"}]
 readme = "README.md"
 license = {text = "BSD-3-Clause"}
-requires-python = ">=3.12"
+requires-python = ">=3.10"
 dependencies = [
   "torch>=2.9.0",
   "transformers>=4.49.0",

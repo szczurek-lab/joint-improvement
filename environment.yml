@@ -2,7 +2,7 @@ name: joint-improvement
 channels:
   - conda-forge
 dependencies:
-  - python=3.12
+  - python=3.10
   - pip
   # All Python dependencies installed via setup script:
   # 1. PyTorch with CUDA 12.6

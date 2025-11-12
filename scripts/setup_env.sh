@@ -51,12 +51,6 @@ except ImportError as e:
     echo "Installation completed successfully!"
     echo "=========================================="
     echo ""
-    echo "To activate the environment, run:"
-    echo "  micromamba activate $ENV_NAME"
-    echo ""
-    echo "Or use micromamba run to execute commands:"
-    echo "  micromamba run -n $ENV_NAME python -m joint_improvement.hf_trainer --config configs/hf_imdb.yaml"
-    echo ""
 else
     echo ""
     echo "=========================================="
