@@ -77,8 +77,10 @@ class GumbeldoreMixin(BaseSearchMixin):
         advantage_fn: Callable[[float], float],
         oracle_fn: Callable[[torch.LongTensor], float] | None = None,
     ) -> float:
-        prediction = self._get_model_predictions(input_ids=input_ids) if oracle_fn is None else oracle_fn(input_ids)
-        return advantage_fn(float(prediction))
+        objective_fn_evaluation = (
+            self._get_model_predictions(input_ids=input_ids) if oracle_fn is None else oracle_fn(input_ids)
+        )
+        return advantage_fn(float(objective_fn_evaluation))
 
     def _get_sampler(
         self,
