@@ -1,8 +1,11 @@
 """LogP calculation utilities for molecular properties."""
 
 try:
-    from rdkit import Chem
+    from rdkit import Chem, RDLogger
     from rdkit.Chem import AllChem, Crippen
+
+    # Suppress RDKit warnings
+    RDLogger.DisableLog("rdApp.*")  # type: ignore[attr-defined]
 
     _RDKIT_AVAILABLE = True
 except ImportError:
@@ -10,6 +13,7 @@ except ImportError:
     Chem = None
     AllChem = None
     Crippen = None
+    RDLogger = None
 
 
 def calculate_logp(smiles: str) -> float:

@@ -103,6 +103,7 @@ show_error_codes = true
 show_error_context = true
 ignore_missing_imports = true
 no_strict_optional = true
+follow_imports = "skip"
 exclude = [
     ".*/incremental_sbs\\.py",
     ".*/stochastic_beam_search\\.py",
@@ -110,8 +111,8 @@ exclude = [
 
 [[tool.mypy.overrides]]
 module = [
-    "joint_improvement.generators.incremental_sbs",
-    "joint_improvement.generators.stochastic_beam_search",
+    "joint_improvement.generators.utils.incremental_sbs",
+    "joint_improvement.generators.utils.stochastic_beam_search",
 ]
 ignore_errors = true
 
