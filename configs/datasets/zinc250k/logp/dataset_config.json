@@ -1,0 +1,7 @@
+{
+    "data_path": "data/processed/zinc250k/logp/seed_{seed}/{split}.npz",
+    "sequence_key": "sequence",
+    "target_key": "labels",
+    "transforms": null,
+    "target_transforms": null
+}

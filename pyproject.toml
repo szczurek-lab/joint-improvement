@@ -19,6 +19,7 @@ dependencies = [
   "tqdm",
   "numpy",
   "pyyaml>=6.0",
+  "loguru",
 ]
 
 [project.optional-dependencies]

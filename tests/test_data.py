@@ -43,21 +43,21 @@ def test_sequence_dataset_applies_transforms():
 
 
 def test_resolve_data_path_basic_usage():
-    """Test basic usage with seed and split."""
-    data_path = "seed_{seed}/{split}.npz"
-    result = _resolve_data_path(data_path, split="train", seed=1337)
-    assert result == Path("seed_1337/train.npz")
+    """Test basic usage with split."""
+    data_path = "seed_0/{split}.npz"
+    result = _resolve_data_path(data_path, split="train")
+    assert result == Path("seed_0/train.npz")
 
 
 def test_resolve_data_path_with_root():
     """Test with root directory."""
-    data_path = "seed_{seed}/{split}.npz"
-    result = _resolve_data_path(data_path, split="train", seed=1337, root="root")
-    assert result == Path("root/seed_1337/train.npz")
+    data_path = "seed_0/{split}.npz"
+    result = _resolve_data_path(data_path, split="train", root="root")
+    assert result == Path("root/seed_0/train.npz")
 
 
 def test_resolve_data_path_missing_placeholder_error():
     """Test error when placeholder is missing."""
-    data_path = "data/{split}.npz"
-    with pytest.raises(ValueError, match=".*{seed}.*placeholder"):
-        _resolve_data_path(data_path, seed=42, split="train")
+    data_path = "data/train.npz"
+    with pytest.raises(ValueError, match=".*{split}.*placeholder"):
+        _resolve_data_path(data_path, split="train")

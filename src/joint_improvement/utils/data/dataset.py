@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
@@ -37,6 +38,41 @@ class SequenceDatasetConfig:
     transforms: Sequence[dict[str, Any]] | None = None
     target_transforms: Sequence[dict[str, Any]] | None = None
 
+    @classmethod
+    def from_pretrained(cls, pretrained_config_name_or_path: Path | str) -> SequenceDatasetConfig:
+        """Load SequenceDatasetConfig from a JSON file.
+
+        Parameters
+        ----------
+        pretrained_config_name_or_path : Path | str
+            Path to the JSON configuration file.
+
+        Returns
+        -------
+        SequenceDatasetConfig
+            Configuration object loaded from JSON.
+
+        Raises
+        ------
+        FileNotFoundError
+            If the JSON file does not exist.
+        json.JSONDecodeError
+            If the JSON file is invalid.
+
+        Examples
+        --------
+        >>> config = SequenceDatasetConfig.from_pretrained("configs/datasets/zinc250k/logp/seed_0/dataset_config.json")
+        >>> dataset = SequenceDataset.from_config(config, split="train")
+        """
+        config_path = Path(pretrained_config_name_or_path)
+        if not config_path.exists():
+            raise FileNotFoundError(f"Configuration file not found: {config_path}")
+
+        with config_path.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        return cls(**data)
+
 
 class SequenceDataset(Dataset):
     """Minimal PyTorch Dataset.
@@ -72,12 +108,12 @@ class SequenceDataset(Dataset):
             Optional sequence of transforms applied to each target during `__getitem__`.
             Transforms are applied in order.
 
-        Raises:
+        Raises
         ------
         ValueError
             If `sequences` and `targets` have different lengths.
 
-        Examples:
+        Examples
         --------
         >>> dataset = SequenceDataset(sequences=["ACDEFGHIK", "LMNPQRSTV"], targets=[0.5, 0.8])
         """
@@ -89,10 +125,32 @@ class SequenceDataset(Dataset):
         self.transforms = transforms
         self.target_transforms = target_transforms
 
+    @property
+    def sequences(self) -> list[str]:
+        """Return the sequences.
+
+        Returns
+        -------
+        list[str]
+            Sequences.
+        """
+        return self._sequences
+
+    @property
+    def targets(self) -> list[float | int]:
+        """Return the targets.
+
+        Returns
+        -------
+        list[float | int]
+            Targets.
+        """
+        return self._targets
+
     def __len__(self) -> int:
         """Return the number of samples in the dataset.
 
-        Returns:
+        Returns
         -------
         int
             Number of samples.
@@ -107,14 +165,14 @@ class SequenceDataset(Dataset):
         index : int
             Index of the sample to retrieve (0-based).
 
-        Returns:
+        Returns
         -------
         dict[str, float | int | str]
             Dictionary containing:
             - `SEQUENCE_FIELD`: The sequence (possibly transformed)
             - `TARGET_FIELD`: The target (possibly transformed)
 
-        Examples:
+        Examples
         --------
         >>> dataset = SequenceDataset(sequences=["ACDEFGHIK"], targets=[0.5])
         >>> sample = dataset[0]
@@ -145,7 +203,6 @@ class SequenceDataset(Dataset):
         config: SequenceDatasetConfig,
         root: Path | str | None = None,
         split: Literal["train", "val", "test"] | None = None,
-        seed: int | None = None,
     ) -> SequenceDataset:
         """Create a SequenceDataset from a configuration.
 
@@ -159,11 +216,8 @@ class SequenceDataset(Dataset):
         split : Literal["train", "val", "test"], optional
             Dataset split name. Required if `data_path` contains `{split}` placeholder.
             Replaces `{split}` with the split name.
-        seed : int, optional
-            Random seed value. Required if `data_path` contains `{seed}` placeholder.
-            Replaces `{seed}` with the seed value.
 
-        Returns:
+        Returns
         -------
         SequenceDataset
 
@@ -178,7 +232,6 @@ class SequenceDataset(Dataset):
             data_path=config.data_path,
             split=split,
             root=root,
-            seed=seed,
         )
 
         # Load data (load_npz_data will raise FileNotFoundError if path doesn't exist)
@@ -207,7 +260,7 @@ class SequenceDataset(Dataset):
         target_transforms = None
         if config.target_transforms:
             target_transforms = [
-                create_target_transform(config=transform_config) for transform_config in config.target_transforms
+                create_target_transform(transform_config) for transform_config in config.target_transforms
             ]
 
         return cls(
@@ -222,43 +275,32 @@ def _resolve_data_path(
     data_path: Path | str,
     split: Literal["train", "val", "test"] | None = None,
     root: Path | str | None = None,
-    seed: int | None = None,
 ) -> Path:
     """Resolve data path by replacing placeholders with actual values.
 
     Parameters
     ----------
     data_path : Path | str
-        Path template containing placeholders. Use `seed_{seed}` as a placeholder for seed
-        (will be replaced with `seed_{actual_seed}`). Use `{split}` as a placeholder for split
-        name. Example: `"directory/seed_{seed}/{split}.npz"`.
+        Path template containing placeholders. Use `{split}` as a placeholder for split
+        name. Example: `"directory/seed_0/{split}.npz"`.
     split : Literal["train", "val", "test"], optional
         Dataset split name. Required if `data_path` contains `{split}` placeholder.
         Replaces `{split}` with the split name.
     root : Path | str, optional
         Root directory for data files. If provided, paths will be resolved
         relative to this root.
-    seed : int, optional
-        Random seed value. Required if `data_path` contains `seed_{seed}` placeholder.
-        Replaces `seed_{seed}` with `seed_{seed_value}`.
 
-    Returns:
+    Returns
     -------
     Path
         Resolved data path with all placeholders replaced.
 
-    Raises:
+    Raises
     ------
     ValueError
         If required placeholders are missing when corresponding parameters are provided.
     """
     data_path_str = str(data_path)
-
-    if seed is not None:
-        placeholder = "{seed}"
-        if placeholder not in data_path_str:
-            raise ValueError(f"data_path must contain {placeholder} as a placeholder when seed is provided. ")
-        data_path_str = data_path_str.replace(placeholder, f"{seed}")
 
     if split is not None:
         placeholder = "{split}"

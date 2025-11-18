@@ -8,31 +8,18 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-import numpy as np
-
 if TYPE_CHECKING:
     from collections.abc import Callable
 
 
-class StandardScaler:
-    """Standard scaler (z-score normalization) for target values.
+class ZScoreScaler:
+    """Z-score normalization (standardization) scaler for target values.
 
-    Transforms targets to have zero mean and unit variance. Useful for regression
-    tasks where targets have different scales or distributions.
-
-    Examples:
-    --------
-    >>> import numpy as np
-    >>> targets = [10.0, 20.0, 30.0, 40.0, 50.0]
-    >>> scaler = StandardScaler.fit(targets)
-    >>> scaler(25.0)
-    0.0
-    >>> scaler.inverse_transform(0.0)
-    25.0
+    Transforms targets using z-score normalization: (x - mean) / std.
     """
 
     def __init__(self, mean: float, std: float) -> None:
-        """Initialize StandardScaler with precomputed statistics.
+        """Initialize ZScoreScaler with precomputed statistics.
 
         Parameters
         ----------
@@ -42,157 +29,78 @@ class StandardScaler:
             Standard deviation of the target values.
         """
         self.mean = mean
-        self.std = std if std > 0 else 1.0  # Avoid division by zero
+        self.std = std
 
     def __call__(self, value: float | int) -> float:
-        """Transform a single target value.
+        """Transform a single target value using z-score normalization.
 
         Parameters
         ----------
         value : float | int
             Target value to transform.
 
-        Returns:
+        Returns
         -------
         float
-            Standardized target value.
+            Z-score normalized target value: (value - mean) / std.
         """
         return float((value - self.mean) / self.std)
 
     def inverse_transform(self, value: float) -> float:
-        """Inverse transform a standardized value back to original scale.
+        """Inverse transform a z-score normalized value back to original scale.
 
         Parameters
         ----------
         value : float
-            Standardized value to transform back.
+            Z-score normalized value to transform back.
 
-        Returns:
+        Returns
         -------
         float
-            Value in original scale.
+            Value in original scale: value * std + mean.
         """
         return float(value * self.std + self.mean)
 
-    def to_dict(self) -> dict[str, Any]:
-        """Serialize scaler to dictionary.
-
-        Returns:
-        -------
-        dict[str, Any]
-            Dictionary containing transform type and parameters.
-        """
-        return {
-            "type": "standard",
-            "mean": self.mean,
-            "std": self.std,
-        }
-
     @classmethod
-    def from_dict(cls, config: dict[str, Any]) -> StandardScaler:
+    def from_config(cls, config: dict[str, Any]) -> ZScoreScaler:
         """Create scaler from configuration dictionary.
 
         Parameters
         ----------
         config : dict[str, Any]
-            Configuration dictionary with "mean" and "std" keys.
+            Configuration dictionary with "type": "zscore", "mean", and "std" keys.
 
-        Returns:
+        Returns
         -------
-        StandardScaler
+        ZScoreScaler
             Scaler instance created from config.
-
-        Examples:
-        --------
-        >>> config = {"type": "standard", "mean": 25.0, "std": 10.0}
-        >>> scaler = StandardScaler.from_dict(config)
-        >>> scaler(25.0)
-        0.0
         """
         return cls(mean=config["mean"], std=config["std"])
 
-    @classmethod
-    def fit(cls, targets: list[float | int] | np.ndarray) -> StandardScaler:
-        """Fit scaler on target values.
 
-        Parameters
-        ----------
-        targets : list[float | int] | np.ndarray
-            Target values to compute statistics from.
-
-        Returns:
-        -------
-        StandardScaler
-            Fitted scaler instance.
-        """
-        arr = np.asarray(targets, dtype=np.float64)
-        mean = float(np.mean(arr))
-        std = float(np.std(arr))
-        return cls(mean=mean, std=std)
-
-
-def create_target_transform(
-    transform_type: str | None = None,
-    targets: list[float | int] | np.ndarray | None = None,
-    config: dict[str, Any] | None = None,
-) -> Callable[[float | int], float]:
-    """Factory function to create target transforms.
-
-    Currently only supports StandardScaler. Can be called in multiple ways:
-    1. With transform_type string and targets
-    2. With a config dictionary (from JSON/config file)
+def create_target_transform(config: dict[str, Any]) -> Callable[[float | int], float]:
+    """Create target transform from configuration dictionary.
 
     Parameters
     ----------
-    transform_type : str | None, optional
-        Type of transform to create. Currently only "standard" is supported.
-        Ignored if config is provided.
-    targets : list[float | int] | np.ndarray | None, optional
-        Target values for fitting scaler. Required when using transform_type.
-    config : dict[str, Any] | None, optional
-        Configuration dictionary. If provided, transform_type is ignored.
-        Dictionary should have "type": "standard", "mean", and "std" keys.
+    config : dict[str, Any]
+        Configuration dictionary with "type": "zscore", "mean", and "std" keys.
 
-    Returns:
+    Returns
     -------
     Callable[[float | int], float]
         Target transform function.
 
-    Raises:
+    Raises
     ------
     ValueError
-        If transform_type is not recognized or targets are required but not provided.
-
-    Examples:
-    --------
-    Using string type with targets:
-    >>> targets = [10.0, 20.0, 30.0]
-    >>> transform = create_target_transform("standard", targets=targets)
-    >>> transform(20.0)
-    0.0
-
-    Using config dictionary (from JSON):
-    >>> config = {"type": "standard", "mean": 20.0, "std": 10.0}
-    >>> transform = create_target_transform(config=config)
-    >>> transform(20.0)
-    0.0
+        If transform type is not recognized or mean/std are missing.
     """
-    # Handle config dictionary (from JSON/config file)
-    if config is not None:
-        transform_config = config
-        transform_type_str = transform_config.get("type")
-        if transform_type_str == "standard":
-            return StandardScaler.from_dict(transform_config)
-        else:
-            raise ValueError(f"Unknown transform type '{transform_type_str}' in config. Supported type: 'standard'")
+    transform_type = config.get("type")
+    if transform_type not in ("zscore"):
+        raise ValueError(f"Unknown transform type '{transform_type}'. Supported types: 'zscore'")
 
-    # Handle string-based creation
-    if transform_type is None:
-        raise ValueError("Either 'transform_type' or 'config' must be provided")
+    if "mean" not in config or "std" not in config:
+        raise ValueError(f"For '{transform_type}' transform, 'mean' and 'std' must be provided in config")
 
-    if transform_type == "standard":
-        if targets is None:
-            raise ValueError("targets must be provided for 'standard' transform")
-        return StandardScaler.fit(targets)
-    else:
-        raise ValueError(f"Unknown transform_type '{transform_type}'. Supported type: 'standard'")
+    return ZScoreScaler.from_config(config)
