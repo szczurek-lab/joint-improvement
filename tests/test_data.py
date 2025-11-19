@@ -1,10 +1,6 @@
 """Tests for data loading utilities, including dataset and dataloader."""
 
-from pathlib import Path
-
-import pytest
-
-from joint_improvement.utils.data.dataset import SequenceDataset, _resolve_data_path
+from joint_improvement.utils.data.dataset import SequenceDataset
 
 
 def test_sequence_dataset_basic_access():
@@ -40,24 +36,3 @@ def test_sequence_dataset_applies_transforms():
     sample = dataset[0]
     assert sample[SequenceDataset.SEQUENCE_FIELD] == "HI"
     assert sample[SequenceDataset.TARGET_FIELD] == 1
-
-
-def test_resolve_data_path_basic_usage():
-    """Test basic usage with split."""
-    data_path = "seed_0/{split}.npz"
-    result = _resolve_data_path(data_path, split="train")
-    assert result == Path("seed_0/train.npz")
-
-
-def test_resolve_data_path_with_root():
-    """Test with root directory."""
-    data_path = "seed_0/{split}.npz"
-    result = _resolve_data_path(data_path, split="train", root="root")
-    assert result == Path("root/seed_0/train.npz")
-
-
-def test_resolve_data_path_missing_placeholder_error():
-    """Test error when placeholder is missing."""
-    data_path = "data/train.npz"
-    with pytest.raises(ValueError, match=".*{split}.*placeholder"):
-        _resolve_data_path(data_path, split="train")

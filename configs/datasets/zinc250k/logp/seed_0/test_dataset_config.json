@@ -1,5 +1,5 @@
 {
-    "data_path": "data/processed/zinc250k/logp/seed_0/train.npz",
+    "data_path": "data/processed/zinc250k/logp/seed_0/test.npz",
     "sequence_key": "sequence",
     "target_key": "labels",
     "transforms": null,
@@ -11,3 +11,4 @@
         }
     ]
 }
+
