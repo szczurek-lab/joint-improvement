@@ -91,6 +91,10 @@ ignore = [
     "D203", # 1 blank line required before class docstring
     "D212", # Enforces first-line docstring — disabled, since we prefer second-line
     # "D213",  # Multi-line docstring should start on the second line
+
+    # Flake8-tidy-imports — ignore type-checking import restrictions
+    "TC001", # First-party imports should be in a TYPE_CHECKING block
+    "TC002", # Third-party imports should be in a TYPE_CHECKING block
 ]
 
 [tool.ruff.lint.pydocstyle]
