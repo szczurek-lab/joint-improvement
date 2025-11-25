@@ -25,7 +25,7 @@ class PredictionCollator(BaseCollator):
     def __init__(
         self,
         tokenizer: SMILESTokenizer,
-        task_token: str = "<prediction>",
+        task_token: str = "prediction",
         max_length: int = 128,
     ) -> None:
         super().__init__(tokenizer, task_token=task_token, max_length=max_length)
@@ -39,15 +39,17 @@ class PredictionCollator(BaseCollator):
         Parameters
         ----------
         batch : list[dict[str, Any]]
-            List of samples, each containing "sequence" and "targets" keys.
+            List of samples, each containing "sequence" key.
+            May optionally contain "labels" key with target values.
 
         Returns
         -------
         ModelInput
-            Model input container with input_ids, attention_mask, labels, and task.
+            Model input container with input_ids, attention_mask, labels (or None), and task.
         """
         sequences = [item[SequenceDataset.SEQUENCE_FIELD] for item in batch]
-        targets = [item[SequenceDataset.TARGET_FIELD] for item in batch]
+        # Targets may be missing for inference/prediction-only scenarios
+        targets = [item.get(SequenceDataset.TARGET_FIELD) for item in batch]
 
         tokenized = self.tokenizer(sequences)
         input_ids = tokenized["input_ids"]
@@ -66,9 +68,18 @@ class PredictionCollator(BaseCollator):
         input_ids = torch.tensor(input_ids, dtype=torch.long)
         attention_mask_tensor = torch.tensor(attention_mask, dtype=torch.long)
 
-        # Determine label dtype and prepare labels
-        label_dtype = torch.long if isinstance(targets[0], (int, bool)) else torch.float32
-        labels_tensor = torch.tensor(targets, dtype=label_dtype)
+        # Prepare labels if targets are present
+        labels_tensor: torch.Tensor | None = None
+        if any(t is not None for t in targets):
+            # Check if all targets are present
+            if not all(t is not None for t in targets):
+                raise ValueError(
+                    "Mixed batch with some samples having targets and others not. "
+                    "All samples in a batch must either have targets or not."
+                )
+            # Determine label dtype and prepare labels
+            label_dtype = torch.long if isinstance(targets[0], (int, bool)) else torch.float32
+            labels_tensor = torch.tensor(targets, dtype=label_dtype)
 
         return self._to_model_input(
             input_ids=input_ids,

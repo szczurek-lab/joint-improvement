@@ -28,8 +28,8 @@ class MLMCollator(BaseCollator):
     def __init__(
         self,
         tokenizer: SMILESTokenizer,
-        task_token: str = "<mlm>",
-        max_length: int = 512,
+        task_token: str = "mlm",
+        max_length: int = 128,
         mlm_probability: float = 0.15,
     ) -> None:
         super().__init__(tokenizer, task_token=task_token, max_length=max_length)
