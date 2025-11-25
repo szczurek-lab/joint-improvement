@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 from torch.utils.data import DataLoader
 
 if TYPE_CHECKING:
-    from .collator import SequenceCollator
+    from .collators import BaseCollator
     from .dataset import SequenceDataset
 
 
@@ -17,7 +17,7 @@ class SequenceDataLoader(DataLoader):
     `torch.utils.data.DataLoader` while providing a simplified interface for
     sequence datasets.
 
-    Examples:
+    Examples
     --------
     >>> from src.utils import SequenceDataset, SequenceCollator, SequenceDataLoader
     >>> from transformers import AutoTokenizer, DataCollatorWithPadding
@@ -34,7 +34,7 @@ class SequenceDataLoader(DataLoader):
     def __init__(
         self,
         dataset: SequenceDataset,
-        collator: SequenceCollator,
+        collator: BaseCollator,
         batch_size: int = 8,
         shuffle: bool = False,
         num_workers: int = 0,
@@ -47,9 +47,10 @@ class SequenceDataLoader(DataLoader):
         ----------
         dataset : SequenceDataset
             Dataset instance to load batches from.
-        collator : SequenceCollator
+        collator : BaseCollator
             Collator instance for processing batches. Must be compatible with
-            the dataset's output format.
+            the dataset's output format. Prefer BaseCollator subclasses from
+            `collators` module for new code.
         batch_size : int, default=8
             Number of samples per batch.
         shuffle : bool, default=False
@@ -64,12 +65,6 @@ class SequenceDataLoader(DataLoader):
             If `True`, drop the last incomplete batch if the dataset size is not
             divisible by `batch_size`.
 
-        Examples:
-        --------
-        >>> from src.utils import SequenceDataset, SequenceCollator, SequenceDataLoader
-        >>> dataset = SequenceDataset(sequences=["A", "B"], targets=[0.1, 0.2])
-        >>> collator = SequenceCollator(...)
-        >>> loader = SequenceDataLoader(dataset=dataset, collator=collator, batch_size=2, shuffle=True)
         """
         super().__init__(
             dataset=dataset,
