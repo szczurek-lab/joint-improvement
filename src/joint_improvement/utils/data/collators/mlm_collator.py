@@ -59,17 +59,14 @@ class MLMCollator(BaseCollator):
         pad_token_id = self.tokenizer.pad_token_id
         mask_token_id = self.tokenizer.mask_token_id
 
-        # Get task token ID if present
-        task_token_id = None
-        if self.task_token and hasattr(self.tokenizer, "task_token_ids"):
-            task_token_id = self.tokenizer.task_token_ids.get(self.task_token)
+        # Get task token ID (always required, validated during initialization)
+        task_token_id = self.tokenizer.task_token_ids[self.task_token]
 
         # Collect all special token IDs that should not be masked
         special_token_ids = {pad_token_id}
         if mask_token_id is not None:
             special_token_ids.add(mask_token_id)
-        if task_token_id is not None:
-            special_token_ids.add(task_token_id)
+        special_token_ids.add(task_token_id)
 
         # Create probability matrix for masking (only for non-padding, non-special tokens)
         probability_matrix = torch.full(labels.shape, self.mlm_probability, device=input_ids.device)
@@ -158,11 +155,8 @@ class MLMCollator(BaseCollator):
         masked_input_ids, labels = self._mask_tokens(input_ids, attention_mask_tensor)
 
         # Explicitly ensure task token position in labels is -100 (no loss computed)
-        # This is already handled by _mask_tokens (task token won't be masked, so label is -100),
-        # but we make it explicit here for clarity
-        if task_token_id is not None:
-            # Task token is at position 0, ensure label is -100
-            labels[:, 0] = -100
+        # Task token is at position 0, ensure label is -100
+        labels[:, 0] = -100
 
         return self._to_model_input(
             input_ids=masked_input_ids,
