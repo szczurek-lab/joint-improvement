@@ -69,7 +69,7 @@ class PredictionCollator(BaseCollator):
         attention_mask_tensor = torch.tensor(attention_mask, dtype=torch.long)
 
         # Prepare labels if targets are present
-        labels_tensor: torch.Tensor | None = None
+        targets_tensor: torch.Tensor | None = None
         if any(t is not None for t in targets):
             # Check if all targets are present
             if not all(t is not None for t in targets):
@@ -78,12 +78,15 @@ class PredictionCollator(BaseCollator):
                     "All samples in a batch must either have targets or not."
                 )
             # Determine label dtype and prepare labels
-            label_dtype = torch.long if isinstance(targets[0], (int, bool)) else torch.float32
-            labels_tensor = torch.tensor(targets, dtype=label_dtype)
+            targets_dtype = torch.long if isinstance(targets[0], (int, bool)) else torch.float32
+            targets_tensor = torch.tensor(targets, dtype=targets_dtype)
+            # Ensure targets are 2D: [batch_size, num_targets]
+            if len(targets_tensor.shape) == 1:
+                targets_tensor = targets_tensor.unsqueeze(1)
 
         return self._to_model_input(
             input_ids=input_ids,
             attention_mask=attention_mask_tensor,
-            labels=labels_tensor,
             task=self.task_token,
+            targets=targets_tensor,
         )

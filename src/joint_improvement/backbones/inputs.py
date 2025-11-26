@@ -23,19 +23,15 @@ class ModelInput:
     task: str
     attention_mask: torch.Tensor | None = None
     labels: torch.Tensor | None = None
+    targets: torch.Tensor | None = None
 
     def keys(self) -> list[str]:
-        """Return keys for dictionary unpacking compatibility.
-
-        Only includes keys that should be passed to model forward:
-        - input_ids (always)
-        - task (always)
-        - attention_mask (only if not None)
-        Labels are excluded as they're used for loss computation, not forward pass.
-        """
+        """Return keys for dictionary unpacking compatibility."""
         keys = ["input_ids", "task"]
         if self.attention_mask is not None:
             keys.append("attention_mask")
+        if self.targets is not None:
+            keys.append("targets")
         return keys
 
     def __getitem__(self, key: str) -> torch.Tensor | str | None:
@@ -48,6 +44,8 @@ class ModelInput:
             return self.attention_mask
         elif key == "labels":
             return self.labels
+        elif key == "targets":
+            return self.targets
         else:
             raise KeyError(f"ModelInput has no key '{key}'")
 
@@ -57,7 +55,7 @@ class ModelInput:
 
     def __contains__(self, key: str) -> bool:
         """Support 'in' operator for dictionary compatibility."""
-        return key in self.keys()
+        return key in ["input_ids", "task", "attention_mask", "labels", "targets"]
 
     def to_dict(self) -> dict[str, torch.Tensor | str | None]:
         """Convert to dictionary for explicit conversion if needed."""
@@ -69,6 +67,8 @@ class ModelInput:
             result["attention_mask"] = self.attention_mask
         if self.labels is not None:
             result["labels"] = self.labels
+        if self.targets is not None:
+            result["targets"] = self.targets
         return result
 
     def to(self, device: torch.device | str) -> ModelInput:
@@ -96,6 +96,7 @@ class ModelInput:
             task=self.task,
             attention_mask=self.attention_mask.to(device) if self.attention_mask is not None else None,
             labels=self.labels.to(device) if self.labels is not None else None,
+            targets=self.targets.to(device) if self.targets is not None else None,
         )
 
 

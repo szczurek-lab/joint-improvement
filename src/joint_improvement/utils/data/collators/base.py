@@ -147,6 +147,7 @@ class BaseCollator(ABC):
         attention_mask: torch.Tensor,
         task: str,
         labels: torch.Tensor | None = None,
+        targets: torch.Tensor | None = None,
     ) -> ModelInput:
         """Convert tokenized tensors to ModelInput.
 
@@ -159,7 +160,9 @@ class BaseCollator(ABC):
         task : str
             Task name.
         labels : torch.Tensor | None
-            Labels tensor.
+            Labels tensor (for sequence-level tasks like MLM/LM).
+        targets : torch.Tensor | None
+            Targets tensor (for prediction tasks like regression/classification).
 
         Returns
         -------
@@ -170,6 +173,7 @@ class BaseCollator(ABC):
             input_ids=input_ids,
             attention_mask=attention_mask,
             labels=labels,
+            targets=targets,
             task=task,
         )
 
