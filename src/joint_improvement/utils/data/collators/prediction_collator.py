@@ -6,16 +6,15 @@ from typing import TYPE_CHECKING, Any
 
 import torch
 
-from joint_improvement.backbones.inputs import ModelInput
 from joint_improvement.utils.data.dataset import SequenceDataset
 
-from .base import BaseCollator
+from .base import BaseCollatorWithPadding
 
 if TYPE_CHECKING:
     from joint_improvement.tokenizers import SMILESTokenizer
 
 
-class PredictionCollator(BaseCollator):
+class PredictionCollator(BaseCollatorWithPadding):
     """Collator for prediction tasks (classification or regression).
 
     Handles both discrete class labels (classification) and continuous values (regression).
@@ -30,45 +29,34 @@ class PredictionCollator(BaseCollator):
     ) -> None:
         super().__init__(tokenizer, task_token=task_token, max_length=max_length)
 
-    def __call__(self, batch: list[dict[str, Any]]) -> ModelInput:
-        """Collate a batch for prediction tasks.
+    def _prepare_labels_and_targets(
+        self,
+        batch: list[dict[str, Any]],
+        input_ids: torch.Tensor,
+        attention_mask: torch.Tensor,
+    ) -> tuple[torch.Tensor | None, torch.Tensor | None]:
+        """Prepare targets for prediction tasks.
 
-        Adds task token, applies padding with truncation, creates attention masks,
-        and prepares labels for classification or regression tasks.
+        Extracts target values from batch and converts them to tensors.
+        Handles both classification (int/bool) and regression (float) targets.
 
         Parameters
         ----------
         batch : list[dict[str, Any]]
-            List of samples, each containing "sequence" key.
-            May optionally contain "labels" key with target values.
+            Original batch containing target values under TARGET_FIELD key.
+        input_ids : torch.Tensor
+            Input token IDs tensor (unused, kept for interface consistency).
+        attention_mask : torch.Tensor
+            Attention mask tensor (unused, kept for interface consistency).
 
         Returns
         -------
-        ModelInput
-            Model input container with input_ids, attention_mask, labels (or None), and task.
+        tuple[torch.Tensor | None, torch.Tensor | None]
+            Tuple of (None, targets) where targets is a tensor or None if missing.
         """
-        sequences = [item[SequenceDataset.SEQUENCE_FIELD] for item in batch]
         # Targets may be missing for inference/prediction-only scenarios
         targets = [item.get(SequenceDataset.TARGET_FIELD) for item in batch]
 
-        tokenized = self.tokenizer(sequences)
-        input_ids = tokenized["input_ids"]
-        attention_mask = tokenized["attention_mask"]
-
-        # Add task token first
-        input_ids, attention_mask, task_token_id = self._prepend_task_token(input_ids, attention_mask)
-
-        # Apply truncation
-        input_ids, attention_mask = self._apply_truncation(input_ids, attention_mask)
-
-        # Apply padding
-        input_ids, attention_mask = self._apply_padding(input_ids, attention_mask)
-
-        # Convert to tensors
-        input_ids = torch.tensor(input_ids, dtype=torch.long)
-        attention_mask_tensor = torch.tensor(attention_mask, dtype=torch.long)
-
-        # Prepare labels if targets are present
         targets_tensor: torch.Tensor | None = None
         if any(t is not None for t in targets):
             # Check if all targets are present
@@ -84,9 +72,4 @@ class PredictionCollator(BaseCollator):
             if len(targets_tensor.shape) == 1:
                 targets_tensor = targets_tensor.unsqueeze(1)
 
-        return self._to_model_input(
-            input_ids=input_ids,
-            attention_mask=attention_mask_tensor,
-            task=self.task_token,
-            targets=targets_tensor,
-        )
+        return None, targets_tensor

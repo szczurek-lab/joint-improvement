@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 from torch.utils.data import DataLoader
 
 if TYPE_CHECKING:
-    from .collators import BaseCollator
+    from .collators import BaseCollatorWithPadding
     from .dataset import SequenceDataset
 
 
@@ -34,7 +34,7 @@ class SequenceDataLoader(DataLoader):
     def __init__(
         self,
         dataset: SequenceDataset,
-        collator: BaseCollator,
+        collator: BaseCollatorWithPadding,
         batch_size: int = 8,
         shuffle: bool = False,
         num_workers: int = 0,
@@ -47,7 +47,7 @@ class SequenceDataLoader(DataLoader):
         ----------
         dataset : SequenceDataset
             Dataset instance to load batches from.
-        collator : BaseCollator
+        collator : BaseCollatorWithPadding
             Collator instance for processing batches. Must be compatible with
             the dataset's output format. Prefer BaseCollator subclasses from
             `collators` module for new code.

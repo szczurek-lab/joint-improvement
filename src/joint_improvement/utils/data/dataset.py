@@ -1,18 +1,19 @@
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from torch.utils.data import Dataset
 
+from joint_improvement.utils.config import BaseConfig
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
 
 @dataclass
-class SequenceDatasetConfig:
+class SequenceDatasetConfig(BaseConfig):
     """SequenceDataset configuration.
 
     Parameters
@@ -35,37 +36,6 @@ class SequenceDatasetConfig:
     target_key: str | None = None
     transforms: Sequence[dict[str, Any]] | None = None
     target_transforms: Sequence[dict[str, Any]] | None = None
-
-    @classmethod
-    def from_pretrained(cls, pretrained_config_name_or_path: Path | str) -> SequenceDatasetConfig:
-        """Load SequenceDatasetConfig from a JSON file.
-
-        Parameters
-        ----------
-        pretrained_config_name_or_path : Path | str
-            Path to the JSON configuration file.
-
-        Returns
-        -------
-        SequenceDatasetConfig
-            Configuration object loaded from JSON.
-
-        Raises
-        ------
-        FileNotFoundError
-            If the JSON file does not exist.
-        json.JSONDecodeError
-            If the JSON file is invalid.
-
-        """
-        config_path = Path(pretrained_config_name_or_path)
-        if not config_path.exists():
-            raise FileNotFoundError(f"Configuration file not found: {config_path}")
-
-        with config_path.open("r", encoding="utf-8") as f:
-            data = json.load(f)
-
-        return cls(**data)
 
 
 class SequenceDataset(Dataset):

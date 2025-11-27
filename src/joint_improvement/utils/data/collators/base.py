@@ -7,14 +7,20 @@ from typing import TYPE_CHECKING, Any
 
 import torch
 
-from joint_improvement.backbones.inputs import ModelInput
+from joint_improvement.hyformer.inputs import ModelInput
+from joint_improvement.utils.data.dataset import SequenceDataset
 
 if TYPE_CHECKING:
     from joint_improvement.tokenizers import SMILESTokenizer
 
 
-class BaseCollator(ABC):
-    """Base interface for task-specific collators."""
+class BaseCollatorWithPadding(ABC):
+    """Base collator with common preprocessing (tokenization, padding, truncation).
+
+    Implements the common preprocessing pipeline and delegates label/target
+    preparation to subclasses. All collators that need padding and truncation
+    should inherit from this class.
+    """
 
     def __init__(
         self,
@@ -107,9 +113,46 @@ class BaseCollator(ABC):
         attention_mask = [mask + [0] * (max_len - len(mask)) for mask in attention_mask]
         return input_ids, attention_mask
 
+    def _prepare_inputs(self, batch: list[dict[str, Any]]) -> tuple[torch.Tensor, torch.Tensor]:
+        """Prepare input tensors from batch (common preprocessing pipeline).
+
+        Handles the common preprocessing steps: extract sequences, tokenize,
+        prepend task token, truncate, pad, and convert to tensors.
+
+        Parameters
+        ----------
+        batch : list[dict[str, Any]]
+            List of samples, each containing a "sequence" key.
+
+        Returns
+        -------
+        tuple[torch.Tensor, torch.Tensor]
+            Tuple of (input_ids, attention_mask) as tensors.
+        """
+        sequences = [item[SequenceDataset.SEQUENCE_FIELD] for item in batch]
+
+        tokenized = self.tokenizer(sequences)
+        encoded = tokenized["input_ids"]
+        attention_mask = tokenized["attention_mask"]
+
+        # Add task token first (before truncation and padding)
+        encoded, attention_mask = self._prepend_task_token(encoded, attention_mask)
+
+        # Apply truncation
+        encoded, attention_mask = self._apply_truncation(encoded, attention_mask)
+
+        # Apply padding
+        encoded, attention_mask = self._apply_padding(encoded, attention_mask)
+
+        # Convert to tensors
+        input_ids = torch.tensor(encoded, dtype=torch.long)
+        attention_mask_tensor = torch.tensor(attention_mask, dtype=torch.long)
+
+        return input_ids, attention_mask_tensor
+
     def _prepend_task_token(
         self, encoded: list[list[int]], attention_mask: list[list[int]]
-    ) -> tuple[list[list[int]], list[list[int]], int]:
+    ) -> tuple[list[list[int]], list[list[int]]]:
         """Prepend task token to encoded sequences and update attention_mask.
 
         Adds the task token at the beginning of each sequence and ensures
@@ -129,8 +172,8 @@ class BaseCollator(ABC):
 
         Returns
         -------
-        tuple[list[list[int]], list[list[int]], int]
-            Tuple of (encoded_with_task_token, attention_mask_with_task_token, task_token_id).
+        tuple[list[list[int]], list[list[int]]]
+            Tuple of (encoded_with_task_token, attention_mask_with_task_token).
         """
         # Task token is always required and validated during __init__, so we can directly access it
         task_token_id = self.tokenizer.task_token_ids[self.task_token]
@@ -138,7 +181,6 @@ class BaseCollator(ABC):
         return (
             [[task_token_id] + seq for seq in encoded],
             [[1] + mask for mask in attention_mask],
-            task_token_id,
         )
 
     def _to_model_input(
@@ -177,13 +219,61 @@ class BaseCollator(ABC):
             task=task,
         )
 
-    @abstractmethod
     def __call__(self, batch: list[dict[str, Any]]) -> ModelInput:
         """Collate a batch of samples from SequenceDataset.
+
+        Implements the common preprocessing pipeline and delegates label/target
+        preparation to subclasses via `_prepare_labels_and_targets`.
+
+        Parameters
+        ----------
+        batch : list[dict[str, Any]]
+            List of samples from dataset.
 
         Returns
         -------
         ModelInput
-            Model input container with input_ids, attention_mask, labels, and task.
+            Model input container with input_ids, attention_mask, labels/targets, and task.
+        """
+        # Prepare input tensors (common preprocessing)
+        input_ids, attention_mask = self._prepare_inputs(batch)
+
+        # Prepare labels and targets (task-specific)
+        labels, targets = self._prepare_labels_and_targets(batch, input_ids, attention_mask)
+
+        return self._to_model_input(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            labels=labels,
+            targets=targets,
+            task=self.task_token,
+        )
+
+    @abstractmethod
+    def _prepare_labels_and_targets(
+        self,
+        batch: list[dict[str, Any]],
+        input_ids: torch.Tensor,
+        attention_mask: torch.Tensor,
+    ) -> tuple[torch.Tensor | None, torch.Tensor | None]:
+        """Prepare labels and targets for the task.
+
+        Subclasses implement this method to prepare task-specific labels or targets.
+        For sequence-level tasks (LM, MLM), return labels and None for targets.
+        For prediction tasks, return None for labels and targets tensor.
+
+        Parameters
+        ----------
+        batch : list[dict[str, Any]]
+            Original batch from dataset (may contain target values).
+        input_ids : torch.Tensor
+            Prepared input token IDs tensor.
+        attention_mask : torch.Tensor
+            Prepared attention mask tensor.
+
+        Returns
+        -------
+        tuple[torch.Tensor | None, torch.Tensor | None]
+            Tuple of (labels, targets) where one should be None depending on task type.
         """
         pass
