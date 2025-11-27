@@ -10,6 +10,10 @@ authors = [{name = "Serra Korkmaz, Adam Izdebski", email = "adam.izdebski1@gmail
 readme = "README.md"
 license = {text = "BSD-3-Clause"}
 requires-python = ">=3.10"
+# Note: C compiler (gcc/clang) required for torch.compile support.
+# Install via: Ubuntu/Debian: sudo apt-get install build-essential
+#              CentOS/RHEL: sudo yum install gcc gcc-c++ make
+#              macOS: brew install gcc
 dependencies = [
   "torch>=2.9.0",
   "transformers>=4.49.0",
