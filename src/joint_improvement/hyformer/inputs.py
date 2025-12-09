@@ -30,6 +30,8 @@ class ModelInput:
         keys = ["input_ids", "task"]
         if self.attention_mask is not None:
             keys.append("attention_mask")
+        if self.labels is not None:
+            keys.append("labels")
         if self.targets is not None:
             keys.append("targets")
         return keys

@@ -120,7 +120,8 @@ class GumbeldoreMixin(BaseSearchMixin):
         Parameters
         ----------
         prefix_input_ids : torch.LongTensor
-            Input token IDs tensor representing the initial sequence/prompt of shape (sequence_length, ) for a single sequence.
+            Input token IDs tensor representing the initial sequence/prompt of shape
+            (sequence_length, ) for a single sequence.
         max_sequence_length : int
             Maximum sequence length of the generated sequence.
         advantage_fn : Callable[[float], float]

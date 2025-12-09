@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import torch
+
+from joint_improvement.utils.config import BaseConfig
 
 SMILES_REGEX_PATTERN = (
     r"""(\[[^\]]+\]|Br?|Cl?|N|O|S|P|F|I|b|c|n|o|s|p|\(|\)|\.|=|#|-|\+|\\|\/|:|~|@|\?|>>?|\*|\$|%[0-9]{2}|[0-9])"""
@@ -17,7 +18,7 @@ DEFAULT_TOKENIZER_CONFIG_FILENAME = "tokenizer_config.json"
 
 
 @dataclass
-class SMILESTokenizerConfig:
+class SMILESTokenizerConfig(BaseConfig):
     """SMILESTokenizer configuration."""
 
     vocab_filepath: str
@@ -35,9 +36,7 @@ class SMILESTokenizerConfig:
         config_path = Path(pretrained_model_name_or_path)
         if config_path.is_dir():
             config_path = config_path / DEFAULT_TOKENIZER_CONFIG_FILENAME
-        with config_path.open("r", encoding="utf-8") as f:
-            data = json.load(f)
-        return cls(**data)
+        return cls.from_json(config_path)  # type: ignore[return-value]
 
 
 class SMILESTokenizer:

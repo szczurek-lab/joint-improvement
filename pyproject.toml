@@ -101,9 +101,9 @@ show_error_context = true
 ignore_missing_imports = true
 no_strict_optional = true
 follow_imports = "skip"
-extend-exclude = [
-    "**/incremental_sbs.py",
-    "**/stochastic_beam_search.py",
+exclude = [
+    ".*/incremental_sbs\\.py$",
+    ".*/stochastic_beam_search\\.py$",
 ]
 
 [tool.hatch.build.targets.sdist]

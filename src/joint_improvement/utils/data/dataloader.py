@@ -36,9 +36,9 @@ class SequenceDataLoader(DataLoader):
         dataset: SequenceDataset,
         collator: BaseCollatorWithPadding,
         batch_size: int = 8,
-        shuffle: bool = False,
-        num_workers: int = 0,
-        pin_memory: bool = False,
+        shuffle: bool = True,
+        num_workers: int = 4,
+        pin_memory: bool = True,
         drop_last: bool = False,
     ) -> None:
         """Initialize SequenceDataLoader.
