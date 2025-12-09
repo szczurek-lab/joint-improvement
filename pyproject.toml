@@ -5,24 +5,18 @@ build-backend = "hatchling.build"
 [project]
 name = "joint-improvement"
 version = "0.0.1"
-description = "Official repository for Joint Improvement."
+description = "Official repository for Joint Self-Improvement paper."
 authors = [{name = "Serra Korkmaz, Adam Izdebski", email = "adam.izdebski1@gmail.com"}]
 readme = "README.md"
 license = {text = "BSD-3-Clause"}
 requires-python = ">=3.10"
 # Note: C compiler (gcc/clang) required for torch.compile support.
 # Install via: Ubuntu/Debian: sudo apt-get install build-essential
-#              CentOS/RHEL: sudo yum install gcc gcc-c++ make
-#              macOS: brew install gcc
 dependencies = [
   "torch>=2.9.0",
   "transformers>=4.49.0",
-  "datasets>=2.18.0",
-  "accelerate>=0.28",
-  "omegaconf>=2.3.0",
   "tqdm",
   "numpy",
-  "pyyaml>=6.0",
   "loguru",
 ]
 
@@ -39,13 +33,14 @@ dev = [
 
 [tool.ruff]
 line-length = 120
-
-[tool.ruff.format]
-docstring-code-format = true
-exclude = [
+target-version = "py310"
+extend-exclude = [
     "**/incremental_sbs.py",
     "**/stochastic_beam_search.py",
 ]
+
+[tool.ruff.format]
+docstring-code-format = true
 
 [tool.ruff.lint]
 select = [
@@ -60,18 +55,11 @@ select = [
     "BLE",    # flake8-blind-except (discourage bare except)
     "UP",     # pyupgrade (syntax upgrades for newer Python versions)
     "TCH",    # typing imports (prefer standard library typing)
-    "RUF100", # Report unused noqa directives
-]
-exclude = [
-    "**/incremental_sbs.py",
-    "**/stochastic_beam_search.py",
 ]
 
 ignore = [
     # Pycodestyle
-    "E501", # Line too long (we accept long comments; formatter handles code)
     "E731", # Do not assign a lambda expression (we allow this for convenience)
-    "E741", # Ambiguous variable name "l", "O", or "I" (we allow "I" for identity matrices)
 
     # Flake8-bugbear
     "B008", # Do not perform function calls in default arguments (allowed when result is immutable)
@@ -94,7 +82,7 @@ ignore = [
     "D401", # First line should be in imperative mood
     "D203", # 1 blank line required before class docstring
     "D212", # Enforces first-line docstring — disabled, since we prefer second-line
-    # "D213",  # Multi-line docstring should start on the second line
+
 
     # Flake8-tidy-imports — ignore type-checking import restrictions
     "TC001", # First-party imports should be in a TYPE_CHECKING block
@@ -113,24 +101,19 @@ show_error_context = true
 ignore_missing_imports = true
 no_strict_optional = true
 follow_imports = "skip"
-exclude = [
-    ".*/incremental_sbs\\.py",
-    ".*/stochastic_beam_search\\.py",
+extend-exclude = [
+    "**/incremental_sbs.py",
+    "**/stochastic_beam_search.py",
 ]
-
-[[tool.mypy.overrides]]
-module = [
-    "joint_improvement.generators.utils.incremental_sbs",
-    "joint_improvement.generators.utils.stochastic_beam_search",
-]
-ignore_errors = true
-
 
 [tool.hatch.build.targets.sdist]
 exclude = ["docs", "docs/**"]
 
 [tool.hatch.build.targets.wheel]
 exclude = ["docs", "docs/**"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
 
 [tool.coverage.run]
 branch = true

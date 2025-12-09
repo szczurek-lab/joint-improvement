@@ -5,30 +5,33 @@ repos:
         name: mypy
         entry: bash -c 'files=$(git diff --cached --name-only --diff-filter=ACM | grep "\.py$" | grep -v "incremental_sbs.py" | grep -v "stochastic_beam_search.py"); if [ -z "$files" ]; then exit 0; fi; mypy $files'
         language: system
-        always_run: true
+        types: [python]
         pass_filenames: false
 
       - id: ruff-check
         name: ruff-check
-        entry: bash -c 'files=$(git diff --cached --name-only --diff-filter=ACM | grep "\.py$" | grep -v "incremental_sbs.py" | grep -v "stochastic_beam_search.py"); [ -z "$files" ] || ruff check --fix $files'
+        entry: bash -c 'files=$(git diff --cached --name-only --diff-filter=ACM | grep "\.py$" | grep -v "incremental_sbs.py" | grep -v "stochastic_beam_search.py"); if [ -z "$files" ]; then exit 0; fi; ruff check --fix $files'
         language: system
         types: [python]
+        pass_filenames: false
 
       - id: ruff-format
         name: ruff-format
-        entry: bash -c 'files=$(git diff --cached --name-only --diff-filter=ACM | grep "\.py$" | grep -v "incremental_sbs.py" | grep -v "stochastic_beam_search.py"); [ -z "$files" ] || ruff format $files'
+        entry: bash -c 'files=$(git diff --cached --name-only --diff-filter=ACM | grep "\.py$" | grep -v "incremental_sbs.py" | grep -v "stochastic_beam_search.py"); if [ -z "$files" ]; then exit 0; fi; ruff format $files'
         language: system
         types: [python]
+        pass_filenames: false
 
       - id: pytest
         name: pytest
-        entry: bash -c 'PYTHONPATH=src pytest tests/ -x --tb=short -p no:xdist'
+        entry: bash -c 'cd "$(git rev-parse --show-toplevel)" && exec bash scripts/run_pytest.sh'
         language: system
         always_run: true
         pass_filenames: false
 
       - id: nbstripout
         name: nbstripout
-        entry: nbstripout --drop-empty-cells --keep-output
+        entry: bash -c 'files=$(git diff --cached --name-only --diff-filter=ACM | grep "\.ipynb$"); if [ -z "$files" ]; then exit 0; fi; echo "$files" | xargs nbstripout --drop-empty-cells --keep-output'
         language: system
         types: [jupyter]
+        pass_filenames: false

@@ -1,0 +1,24 @@
+{
+  "learning_rate": 3e-4,
+  "weight_decay": 0.1,
+  "beta1": 0.9,
+  "beta2": 0.95,
+  "batch_size": 32,
+  "max_epochs": 100,
+  "grad_clip": 1.0,
+  "warmup_ratio": 0.05,
+  "min_lr_ratio": 1e-5,
+  "decay_lr": true,
+  "dtype": "bfloat16",
+  "num_workers": 8,
+  "log_interval_iterations": 100,
+  "save_interval_epochs": 1,
+  "patience": 5,
+  "compile": true,
+  "seed": 0,
+  "tasks": {
+    "lm": 0.9,
+    "mlm": 0.1
+  }
+}
+
