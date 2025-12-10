@@ -232,3 +232,4 @@ data/
 # test files
 test.ipynb
 test_*.ipynb
+tmp/

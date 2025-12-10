@@ -30,6 +30,13 @@ dev = [
     "pytest-xdist",
     "ruff"
 ]
+chemistry = [
+    "rdkit",
+]
+docking = [
+    "openbabel-wheel",
+    "rdkit",
+]
 
 [tool.ruff]
 line-length = 120
@@ -37,6 +44,7 @@ target-version = "py310"
 extend-exclude = [
     "**/incremental_sbs.py",
     "**/stochastic_beam_search.py",
+    "**/utils/chemistry/docking_utils/**",
 ]
 
 [tool.ruff.format]
@@ -104,6 +112,7 @@ follow_imports = "skip"
 exclude = [
     ".*/incremental_sbs\\.py$",
     ".*/stochastic_beam_search\\.py$",
+    ".*/docking_utils/.*",
 ]
 
 [tool.hatch.build.targets.sdist]
@@ -117,4 +126,4 @@ testpaths = ["tests"]
 
 [tool.coverage.run]
 branch = true
-omit = ["*/.conda/*", "*/tests/*", "*/.Y/*"]
+omit = ["*/.conda/*", "*/tests/*", "*/.Y/*", "*/docking_utils/*"]
