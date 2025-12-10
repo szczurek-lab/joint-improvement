@@ -1,7 +1,7 @@
 """Device-specific optimizations for training.
 
 This module provides utilities for setting up device optimizations including
-CUDA settings, mixed precision training, and GPU-specific optimizations (e.g., H100).
+CUDA settings, mixed precision training, and GPU-specific optimizations (e.g., V100, A100, H100).
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ def setup_device_optimizations(
 ) -> tuple[torch.dtype, str, torch.amp.autocast | nullcontext, torch.amp.GradScaler, str]:
     """Set up device-specific optimizations and mixed precision training.
 
-    Configures CUDA optimizations (TF32, H100-specific settings), validates
+    Configures CUDA optimizations (TF32, GPU-specific settings), validates
     dtype compatibility, and sets up autocast context and gradient scaler.
 
     Parameters
@@ -63,12 +63,20 @@ def setup_device_optimizations(
     device_type = device_obj.type
 
     # Step 2: Detect GPU architecture for optimizations
-    is_h100 = False
+    supports_max_autotune = False
     gpu_name = None
     if device_type == "cuda" and torch.cuda.device_count() > 0:
         try:
             gpu_name = torch.cuda.get_device_name(device_obj.index if device_obj.index is not None else 0)
-            is_h100 = "H100" in gpu_name or "Hopper" in gpu_name
+            # V100, A100, and H100 have enough SMs to benefit from max-autotune
+            supports_max_autotune = (
+                "V100" in gpu_name
+                or "Volta" in gpu_name
+                or "A100" in gpu_name
+                or "Ampere" in gpu_name
+                or "H100" in gpu_name
+                or "Hopper" in gpu_name
+            )
             logger.info(f"GPU detected: {gpu_name}")
         except Exception as e:
             logger.warning(f"Could not detect GPU name: {e}")
@@ -113,24 +121,31 @@ def setup_device_optimizations(
         try:
             import torch._inductor.config as inductor_config
 
-            # Check if the config option exists before setting it
-            # Different PyTorch versions may have different config names
+            # Disable coalescing tiling analysis to avoid InductorError
+            # The error occurs when sympy evaluates expressions that result in negative
+            # values during memory coalescing analysis, violating assertions in torch/utils/_sympy/functions.py
             if hasattr(inductor_config, "coalesce_tiling_analysis"):
                 inductor_config.coalesce_tiling_analysis = False
                 logger.info("Disabled Inductor coalescing analysis for dynamic shape compatibility")
-        except (ImportError, AttributeError):
+
+            # Also disable aggressive fusion which can trigger similar issues with dynamic shapes
+            if hasattr(inductor_config, "aggressive_fusion"):
+                inductor_config.aggressive_fusion = False
+                logger.info("Disabled aggressive fusion for better dynamic shape compatibility")
+        except (ImportError, AttributeError) as e:
             # Inductor config might not be available in all PyTorch versions
             # or the specific config option may not exist
-            pass
+            logger.debug(f"Could not configure inductor settings: {e}")
 
     # Step 6: Determine compile mode
-    # Use "default" mode for better dynamic shape handling and compatibility
-    # "default" is more conservative than "reduce-overhead" but handles variable
-    # batch sizes and sequence lengths better, reducing compilation warnings
-    if is_h100:
-        compile_mode = "max-autotune"  # H100 can handle aggressive optimization
+    # Use "max-autotune" only for high-end GPUs (V100, A100, H100) with enough SMs
+    # Use "reduce-overhead" mode for other GPUs to avoid InductorError with dynamic shapes
+    # "reduce-overhead" is more conservative and avoids problematic optimizations that
+    # can cause sympy assertion errors during memory coalescing analysis
+    if supports_max_autotune:
+        compile_mode = "max-autotune"  # V100/A100/H100 can handle aggressive optimization
     else:
-        compile_mode = "default"  # Better dynamic shape support
+        compile_mode = "reduce-overhead"  # More conservative, avoids dynamic shape analysis issues
     logger.info(f"Compiling with mode: {compile_mode}")
 
     # Step 7: Set up autocast context

@@ -4,28 +4,27 @@ from __future__ import annotations
 
 import argparse
 import sys
+import warnings
 from pathlib import Path
 
 import torch
-from loguru import logger
+
+# Suppress dynamo warnings about non-relation expressions
+# These warnings occur when PyTorch's compiler encounters complex symbolic shape
+# expressions (e.g., OR conditions) that it cannot fully optimize. They are harmless
+# and don't affect training correctness, but can clutter the output.
+warnings.filterwarnings(
+    "ignore",
+    message=".*_maybe_guard_rel.*was called on non-relation expression.*",
+    category=UserWarning,
+)
 
 # Ensure experiments package is importable
 if (project_root := Path(__file__).parent.parent.parent) not in [Path(p) for p in sys.path]:
     sys.path.insert(0, str(project_root))
 
-from experiments.helpers import (
-    load_collator,
-    load_dataset,
-    load_model,
-    load_tokenizer,
-    load_trainer,
-)
-from joint_improvement.utils import (
-    LMCollator,
-    MLMCollator,
-    create_task_dataloaders,
-    set_seed,
-)
+from experiments.helpers import create_dataloader, load_dataset, load_model, load_tokenizer, load_trainer  # noqa: E402
+from joint_improvement.utils import SequenceDataLoader, set_seed  # noqa: E402
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -54,6 +53,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--val-dataset-config",
         type=Path,
+        required=True,
         help="Path to SequenceDatasetConfig JSON file for validation data.",
     )
     parser.add_argument(
@@ -127,91 +127,40 @@ def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
 
-    # Set random seed
     set_seed(args.seed, deterministic=args.deterministic)
-
-    # Create output directory
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Load datasets
     train_dataset = load_dataset(args.train_dataset_config)
-    val_dataset = load_dataset(args.val_dataset_config) if args.val_dataset_config else None
+    val_dataset = load_dataset(args.val_dataset_config)
 
-    # Load tokenizer
     tokenizer = load_tokenizer(args.tokenizer_config, config_dump_dir=args.output_dir)
+    model = load_model(args.model_config, args.model_ckpt, args.device, config_dump_dir=args.output_dir)
+    trainer = load_trainer(args.trainer_config, model, args.device, args.output_dir, config_dump_dir=args.output_dir)
 
-    # Load model
-    model = load_model(model_config=args.model_config, device=args.device, config_dump_dir=args.output_dir)
+    train_loaders: dict[str, SequenceDataLoader] = {}
+    val_loaders: dict[str, SequenceDataLoader] = {}
 
-    # Load trainer
-    trainer = load_trainer(
-        trainer_config=args.trainer_config,
-        model=model,
-        device=args.device,
-        out_dir=args.output_dir,
-        config_dump_dir=args.output_dir,
-    )
-
-    # Trainer must have tasks defined
-    if not trainer.config.tasks:
-        raise ValueError("Trainer config must have tasks defined. Cannot train without tasks.")
-
-    # Trainer tasks must be a subset of tokenizer task tokens
-    trainer_tasks = set(trainer.config.tasks.keys())
-    tokenizer_tasks = set(tokenizer.task_tokens.keys())
-    if not trainer_tasks.issubset(tokenizer_tasks):
-        missing_tasks = trainer_tasks - tokenizer_tasks
-        raise ValueError(
-            f"Trainer tasks ({trainer_tasks}) must be a subset of tokenizer task tokens ({tokenizer_tasks}). "
-            f"Missing task tokens: {missing_tasks}"
-        )
-
-    # check compatibility between tokenizer and model vocab size
-    if model.vocab_size != len(tokenizer.vocab):
-        raise ValueError(
-            f"Model vocab size ({model.vocab_size}) != tokenizer vocab size "
-            f"({len(tokenizer.vocab)}). They must match for training."
-        )
-
-    # So now it is tricky, I could in principle support passing datasets to Trainer
-    # and then it will take care of the dataloaders
-
-    def make_collator(task: str) -> LMCollator | MLMCollator:
-        """Factory function to create collators for each task."""
-        return load_collator(
-            task=task,
+    for task_name in trainer.config.tasks.keys():
+        train_loaders[task_name] = create_dataloader(
+            dataset=train_dataset,
             tokenizer=tokenizer,
-            max_length=args.max_length,
+            task_name=task_name,
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            device=args.device,
+            shuffle=True,
+        )
+        val_loaders[task_name] = create_dataloader(
+            dataset=val_dataset,
+            tokenizer=tokenizer,
+            task_name=task_name,
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            device=args.device,
+            shuffle=False,
         )
 
-    train_loaders, val_loaders = create_task_dataloaders(
-        train_dataset=train_dataset,
-        val_dataset=val_dataset,
-        tasks=trainer.config.tasks,
-        collator_factory=make_collator,
-        batch_size=args.batch_size,
-        num_workers=args.num_workers,
-        device=args.device,
-    )
-
-    # Start training
-    logger.info("=" * 60)
-    logger.info("Starting training...")
-    logger.info("=" * 60)
-    logger.info(f"Device: {args.device}")
-    logger.info(f"Output directory: {args.output_dir}")
-    logger.info(f"Model parameters: {model.get_num_params(trainable_only=True):,}")
-    logger.info(f"Tasks and weights: {trainer.config.tasks}")
-
-    trainer.train(
-        train_loaders=train_loaders,
-        val_loaders=val_loaders,
-    )
-
-    logger.info("=" * 60)
-    logger.info("Training completed!")
-    logger.info(f"Results saved to: {args.output_dir}")
-    logger.info("=" * 60)
+    trainer.train(train_loaders=train_loaders, val_loaders=val_loaders)
 
 
 if __name__ == "__main__":

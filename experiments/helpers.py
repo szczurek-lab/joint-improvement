@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     import argparse
 
-import torch
 from loguru import logger
 
 from joint_improvement.hyformer import Hyformer, HyformerConfig
@@ -19,6 +18,7 @@ from joint_improvement.trainers.multitask import MultiTaskTrainer, TrainerConfig
 from joint_improvement.utils import (
     LMCollator,
     MLMCollator,
+    PredictionCollator,
     SequenceDataLoader,
     SequenceDataset,
     SequenceDatasetConfig,
@@ -55,16 +55,16 @@ def load_model(
     if config_dump_dir is not None:
         dump_configs(config_dump_dir, {"model_config": config})
 
+    model = Hyformer.from_config(config)
+
     if model_ckpt is not None:
         if not model_ckpt.exists():
             raise FileNotFoundError(f"Model checkpoint not found: {model_ckpt}")
-        model = Hyformer.from_pretrained(model_ckpt, device=device)
+        model.load_pretrained(model_ckpt, device=device)
         logger.info("Loaded model weights from checkpoint")
     else:
-        model = Hyformer.from_config(config)
         logger.info("Initialized new model from scratch")
 
-    model.to(device)
     logger.info(f"Model parameters: {model.get_num_params(trainable_only=True):,}")
 
     return model
@@ -120,71 +120,16 @@ def load_dataset(dataset_config_path: Path, config_dump_dir: Path | None = None)
     return dataset
 
 
-def load_collator(
-    task: str,
-    tokenizer: SMILESTokenizer,
-    max_length: int,
-    mlm_probability: float | None = None,
-    mlm_probability_mean: float = 0.15,
-    mlm_probability_std: float = 0.08,
-) -> LMCollator | MLMCollator:
-    """Create appropriate collator for pretraining task.
-
-    Parameters
-    ----------
-    task : str
-        Task name: "lm" or "mlm".
-    tokenizer : SMILESTokenizer
-        Tokenizer instance.
-    max_length : int
-        Maximum sequence length.
-    mlm_probability : float, optional
-        Fixed masking probability for MLM (if None, uses variable masking).
-    mlm_probability_mean : float, default=0.15
-        Mean masking probability for variable MLM masking.
-    mlm_probability_std : float, default=0.08
-        Standard deviation for variable MLM masking.
-
-    Returns
-    -------
-    LMCollator | MLMCollator
-        Collator instance for the specified task.
-
-    Examples
-    --------
-    >>> from pathlib import Path
-    >>> tokenizer = load_tokenizer(Path("configs/tokenizers/smiles"))
-    >>> collator = load_collator("lm", tokenizer, max_length=512)
-    """
-    if task == "lm":
-        return LMCollator(
-            tokenizer=tokenizer,
-            task_token="lm",
-            max_length=max_length,
-        )
-    elif task == "mlm":
-        return MLMCollator(
-            tokenizer=tokenizer,
-            task_token="mlm",
-            max_length=max_length,
-            mlm_probability=mlm_probability,
-            mlm_probability_mean=mlm_probability_mean,
-            mlm_probability_std=mlm_probability_std,
-        )
-    else:
-        raise ValueError(f"Unknown task: {task}. Must be 'lm' or 'mlm'.")
-
-
-def load_dataloader(
+def create_dataloader(
     dataset: SequenceDataset,
-    collator: LMCollator | MLMCollator,
+    tokenizer: SMILESTokenizer,
+    task_name: str,
     batch_size: int,
-    num_workers: int = 0,
-    shuffle: bool = True,
-    device: str | torch.device = "cpu",
-    drop_last: bool = False,
+    num_workers: int,
+    device: str,
+    shuffle: bool,
 ) -> SequenceDataLoader:
-    """Create a single dataloader from dataset and collator.
+    """Create a single dataloader from dataset and tokenizer.
 
     Parameters
     ----------
@@ -194,30 +139,26 @@ def load_dataloader(
         Collator instance for batching.
     batch_size : int
         Batch size.
-    num_workers : int, default=0
+    num_workers : int
         Number of data loading workers.
-    shuffle : bool, default=True
+    shuffle : bool
         Whether to shuffle the dataset.
-    device : str | torch.device, default="cpu"
-        Device to train on (used to determine pin_memory).
-    drop_last : bool, default=False
+    drop_last : bool
         Whether to drop the last incomplete batch.
 
     Returns
     -------
     SequenceDataLoader
         Configured dataloader.
-
-    Examples
-    --------
-    >>> from pathlib import Path
-    >>> dataset = load_dataset(Path("configs/datasets/train.json"))
-    >>> tokenizer = load_tokenizer(Path("configs/tokenizers/smiles"))
-    >>> collator = load_collator("lm", tokenizer, max_length=512)
-    >>> loader = load_dataloader(dataset, collator, batch_size=32, device="cuda")
     """
-    device_obj = torch.device(device) if isinstance(device, str) else device
-    pin_memory = device_obj.type == "cuda"
+    if task_name == "lm":
+        collator = LMCollator(tokenizer=tokenizer)
+    elif task_name == "mlm":
+        collator = MLMCollator(tokenizer=tokenizer)
+    elif task_name == "prediction":
+        collator = PredictionCollator(tokenizer=tokenizer)
+    else:
+        raise ValueError(f"Unknown task: {task_name}. Must be 'lm', 'mlm' or 'prediction'.")
 
     return SequenceDataLoader(
         dataset=dataset,
@@ -225,8 +166,8 @@ def load_dataloader(
         batch_size=batch_size,
         shuffle=shuffle,
         num_workers=num_workers,
-        pin_memory=pin_memory,
-        drop_last=drop_last,
+        pin_memory=True,
+        drop_last=False,
     )
 
 
@@ -235,8 +176,6 @@ def load_trainer(
     model: Hyformer,
     device: str,
     out_dir: Path,
-    resume_from: Path | None = None,
-    seed: int | None = None,
     config_dump_dir: Path | None = None,
 ) -> MultiTaskTrainer:
     """Load or initialize MultiTaskTrainer.
@@ -251,10 +190,6 @@ def load_trainer(
         Device to train on.
     out_dir : Path
         Output directory to save checkpoints and logs.
-    resume_from : Path, optional
-        Path to trainer checkpoint to resume training from.
-    seed : int, optional
-        Random seed to override config seed. If provided, overrides seed in config.
     config_dump_dir : Path, optional
         Directory to save configuration for reproducibility. If provided,
         saves the loaded trainer configuration as trainer_config.json in this directory.
@@ -265,8 +200,6 @@ def load_trainer(
         Initialized trainer instance.
     """
     config = TrainerConfig.from_pretrained(trainer_config)
-    if seed is not None:
-        config.seed = seed
 
     if config_dump_dir is not None:
         dump_configs(config_dump_dir, {"trainer_config": config})
@@ -277,13 +210,6 @@ def load_trainer(
         device=device,
         out_dir=out_dir,
     )
-
-    if resume_from is not None:
-        if not resume_from.exists():
-            raise FileNotFoundError(f"Trainer checkpoint not found: {resume_from}")
-        trainer._load_checkpoint(resume_from, resume_training=True)
-        logger.info(f"Resumed training from checkpoint: {resume_from}")
-        logger.info(f"Resumed from epoch {trainer.state.epoch}")
 
     return trainer
 
