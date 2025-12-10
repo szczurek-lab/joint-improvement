@@ -31,6 +31,15 @@ except ImportError as e:
     _DOCKING_IMPORT_ERROR = str(e)
 
 
+# Docking score thresholds for each target (lower scores indicate better binding)
+TARGET_DOCKING_THRESHOLDS: dict[str, float] = {
+    "braf": 10.3,
+    "parp1": 10.0,
+    "fa7": 8.5,
+    "jak2": 9.1,
+    "5ht1b": 8.7845,
+}
+
 # Singleton instance for docking oracle
 _docking_instance: DockingVina | None = None
 _docking_target: str | None = None

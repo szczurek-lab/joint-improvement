@@ -7,6 +7,8 @@ https://anonymous.4open.science/r/GEAM-45EF/utils_sac/utils.py
 from typing import Tuple
 import os
 import sys
+import atexit
+import tempfile
 from pathlib import Path
 from shutil import rmtree
 import subprocess
@@ -67,15 +69,10 @@ class DockingVina(object):
         self.timeout_gen3d = 30
         self.timeout_dock = 100
 
-        i = 0
-        while True:
-            tmp_dir = f'tmp/tmp{i}'
-            if not os.path.exists(tmp_dir):
-                print(f'Docking tmp dir: {tmp_dir}')
-                os.makedirs(tmp_dir)
-                self.temp_dir = tmp_dir
-                break
-            i += 1
+        # Use tempfile.mkdtemp() for better cleanup and system temp location
+        self.temp_dir = tempfile.mkdtemp(prefix='docking_')
+        # Register cleanup on exit for better reliability
+        atexit.register(self.cleanup)
 
     def gen_3d(self, smi, ligand_mol_file):
         """
@@ -190,6 +187,15 @@ class DockingVina(object):
             affinity = affinity_list[0]
             return_dict[idx] = affinity
 
+    def cleanup(self) -> None:
+        """Explicitly clean up temporary directory."""
+        if hasattr(self, 'temp_dir') and os.path.exists(self.temp_dir):
+            try:
+                rmtree(self.temp_dir)
+            except Exception as e:
+                # Silently ignore cleanup errors (e.g., files still in use)
+                pass
+
     def predict(self, smiles_list):
         """
             input SMILES list
@@ -224,9 +230,8 @@ class DockingVina(object):
         return affinity_list
     
     def __del__(self):
-        if os.path.exists(self.temp_dir):
-            rmtree(self.temp_dir)
-            print(f'{self.temp_dir} removed')
+        """Cleanup when object is destroyed."""
+        self.cleanup()
 
 
 def run_vina(
