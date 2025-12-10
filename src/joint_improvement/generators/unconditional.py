@@ -107,15 +107,25 @@ class UnconditionalGeneratorMixin(GeneratorMixin):
         generated = input_ids.clone()
         finished = torch.zeros(batch_size, dtype=torch.bool, device=device)
 
+        # Track if cache has been initialized (cache is initialized after first forward pass)
+        cache_initialized = False
+
         for _ in range(max_new_tokens):
-            # Get logits for next token (only use last token when using cache)
-            if use_cache and kv_caches is not None:
-                # When using cache, only pass the last token
+            # Get logits for next token
+            # On first iteration with cache, pass full sequence to initialize cache
+            # On subsequent iterations, only pass last token since cache contains history
+            if use_cache and cache_initialized:
+                # Cache is initialized, only pass the last token
                 input_ids_for_logits = generated[:, -1:]
             else:
+                # First iteration or no cache: pass full sequence
                 input_ids_for_logits = generated
 
             logits, kv_caches = self._get_model_logits(input_ids_for_logits, kv_caches=kv_caches, use_cache=use_cache)
+
+            # Mark cache as initialized after first forward pass
+            if use_cache and not cache_initialized:
+                cache_initialized = kv_caches is not None and any(cache is not None for cache in kv_caches)
 
             # Sample next token
             next_tokens = self._sample_token(
@@ -146,9 +156,9 @@ class UnconditionalGeneratorMixin(GeneratorMixin):
         temperature: float = 1.0,
         top_k: int | None = None,
         top_p: float | None = None,
-        use_cache: bool = True,
+        use_cache: bool = False,
         seed: int | None = None,
-    ) -> torch.LongTensor:
+    ) -> list[torch.LongTensor]:
         """Generate multiple sequences using unconditional generation.
 
         Parameters
@@ -174,21 +184,25 @@ class UnconditionalGeneratorMixin(GeneratorMixin):
 
         Returns
         -------
-        torch.LongTensor
-            Generated sequences of shape [B * num_samples, T + max_new_tokens].
+        list[torch.LongTensor]
+            List of generated sequences. Each tensor has shape [T + max_new_tokens] where T is the
+            input sequence length. The list contains B * num_samples tensors, where B is the batch
+            size. Sequences are ordered such that all samples for the first input come first,
+            followed by all samples for the second input, etc.
         """
         device = input_ids.device
+        batch_size = input_ids.shape[0]
 
-        generated_sequences = []
-        for sample_idx in tqdm(range(num_samples), desc="Generating sequences"):
+        generated_sequences: list[torch.LongTensor] = []
+        for sample_idx in tqdm(range(num_samples), desc="Generating sequences", miniters=1, mininterval=0):
             # Create generator from seed for each sample
             generator = None
             if seed is not None:
                 generator = torch.Generator(device=device)
                 generator.manual_seed(seed + sample_idx)
 
-            # Generate single sequence
-            generated = self.generate(
+            # Generate batch of sequences for this sample index
+            generated_batch = self.generate(
                 input_ids=input_ids,
                 max_new_tokens=max_new_tokens,
                 eos_token_id=eos_token_id,
@@ -198,10 +212,11 @@ class UnconditionalGeneratorMixin(GeneratorMixin):
                 use_cache=use_cache,
                 generator=generator,
             )
-            generated_sequences.append(generated)
+            # Split batch into individual sequences and add to list
+            for batch_idx in range(batch_size):
+                generated_sequences.append(generated_batch[batch_idx])
 
-        # Concatenate all generated sequences
-        return torch.cat(generated_sequences, dim=0)
+        return generated_sequences
 
     @torch.inference_mode()
     def _get_model_logits(
@@ -258,3 +273,6 @@ class UnconditionalGeneratorMixin(GeneratorMixin):
             Number of layers in the model.
         """
         return len(self.blocks)
+
+
+# %%

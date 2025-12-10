@@ -98,35 +98,48 @@ def setup_device_optimizations(
         logger.info("Applying CUDA optimizations...")
 
         # Enable TF32 for Ampere+ GPUs (A100, H100, RTX 30xx, etc.)
-        # Use new API if available, fallback to deprecated API for compatibility
-        if hasattr(torch.backends.cuda.matmul, "fp32_precision"):
-            torch.backends.cuda.matmul.fp32_precision = "tf32"
-            logger.info("Enabled TF32 for CUDA matrix multiplications")
-        elif hasattr(torch.backends.cuda.matmul, "allow_tf32"):
-            torch.backends.cuda.matmul.allow_tf32 = True
-            logger.info("Enabled TF32 for CUDA matrix multiplications")
+        # Using the new API (fp32_precision) as the old API (allow_tf32) is deprecated in PyTorch 2.9+
+        # The new API works with both compiled and non-compiled models
+        torch.backends.cuda.matmul.fp32_precision = "tf32"
+        torch.backends.cudnn.conv.fp32_precision = "tf32"
+        logger.info("Enabled TF32 for CUDA matrix multiplications and cuDNN operations")
 
-        if hasattr(torch.backends.cudnn.conv, "fp32_precision"):
-            torch.backends.cudnn.conv.fp32_precision = "tf32"
-            logger.info("Enabled TF32 for cuDNN operations")
-        elif hasattr(torch.backends.cudnn, "allow_tf32"):
-            torch.backends.cudnn.allow_tf32 = True
-            logger.info("Enabled TF32 for cuDNN operations")
+    # Step 5: Configure Inductor for compilation (if enabled)
+    # Disable coalescing analysis to avoid InductorError with dynamic shapes
+    # This optimization can cause issues when analyzing memory coalescing with
+    # complex dynamic shape expressions (especially in MLM tasks with variable masking),
+    # leading to negative modulo operations during sympy expression evaluation.
+    if hasattr(config, "compile") and config.compile:
+        try:
+            import torch._inductor.config as inductor_config
 
-    # Step 5: Determine compile mode
+            # Check if the config option exists before setting it
+            # Different PyTorch versions may have different config names
+            if hasattr(inductor_config, "coalesce_tiling_analysis"):
+                inductor_config.coalesce_tiling_analysis = False
+                logger.info("Disabled Inductor coalescing analysis for dynamic shape compatibility")
+        except (ImportError, AttributeError):
+            # Inductor config might not be available in all PyTorch versions
+            # or the specific config option may not exist
+            pass
+
+    # Step 6: Determine compile mode
+    # Use "default" mode for better dynamic shape handling and compatibility
+    # "default" is more conservative than "reduce-overhead" but handles variable
+    # batch sizes and sequence lengths better, reducing compilation warnings
     if is_h100:
-        compile_mode = "max-autotune"
+        compile_mode = "max-autotune"  # H100 can handle aggressive optimization
     else:
-        compile_mode = "reduce-overhead"
+        compile_mode = "default"  # Better dynamic shape support
     logger.info(f"Compiling with mode: {compile_mode}")
 
-    # Step 6: Set up autocast context
+    # Step 7: Set up autocast context
     if device_type == "cpu":
         ctx = nullcontext()
     else:
         ctx = torch.amp.autocast(device_type=device_type, dtype=ptdtype)
 
-    # Step 7: Set up gradient scaler
+    # Step 8: Set up gradient scaler
     # Only needed for float16 (bfloat16 has better numerical stability)
     use_scaler = device_type == "cuda" and requested_dtype == "float16"
     scaler = torch.amp.GradScaler(enabled=use_scaler)

@@ -4,6 +4,8 @@ from __future__ import annotations
 import torch
 from torch import nn
 
+from joint_improvement.generators import UnconditionalGeneratorMixin
+
 from .config import HyformerConfig
 from .layers.kv_cache import KVCache
 from .layers.prediction_head import PredictionHeadModule
@@ -13,7 +15,7 @@ from .outputs import ModelOutput
 from .pretrained import PretrainedMixin
 
 
-class Hyformer(PretrainedMixin, nn.Module):
+class Hyformer(PretrainedMixin, UnconditionalGeneratorMixin, nn.Module):
     """
     Hyformer backbone model.
 
@@ -60,6 +62,10 @@ class Hyformer(PretrainedMixin, nn.Module):
 
     The model supports both causal (autoregressive) and bidirectional attention
     modes, controlled by the `is_causal` parameter in the forward pass.
+
+    The model includes UnconditionalGeneratorMixin by default, providing standard
+    autoregressive generation methods (greedy, top-k, top-p, temperature sampling)
+    via the `generate()` method.
     """
 
     def __init__(
@@ -193,11 +199,13 @@ class Hyformer(PretrainedMixin, nn.Module):
         # Compute logits from task-specific head
         if task == "prediction":
             # For prediction tasks, use CLS token (first token) - DINOv2 best practice
-            pooled = x[:, 0, :]  # [B, d_model]
+            # Ensure contiguous tensor to avoid compilation issues when switching tasks
+            pooled = x[:, 0, :].contiguous()  # [B, d_model]
             logits = self.heads[task](pooled)  # [B, num_labels]
         else:
             # For LM/MLM tasks, use full sequence
-            logits = self.heads[task](x)  # [B, T, vocab_size]
+            # Ensure contiguous tensor for consistent compilation behavior
+            logits = self.heads[task](x.contiguous())  # [B, T, vocab_size]
 
         # Compute loss if labels provided
         loss = None
@@ -205,7 +213,7 @@ class Hyformer(PretrainedMixin, nn.Module):
             if task == "lm":
                 loss = compute_lm_loss(logits, labels, shift_labels=is_causal)
             elif task == "mlm":
-                loss = compute_mlm_loss(logits, labels, vocab_size=self.vocab_size)
+                loss = compute_mlm_loss(logits, labels)
             elif task == "prediction":
                 if self.num_prediction_tasks is None:
                     raise ValueError("num_prediction_tasks must be set for prediction task")

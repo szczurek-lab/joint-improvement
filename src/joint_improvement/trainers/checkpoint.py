@@ -2,193 +2,199 @@
 
 from __future__ import annotations
 
-import tempfile
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import torch
-
-if TYPE_CHECKING:
-    from .trainer import TrainerState
+from loguru import logger
 
 
 @dataclass
 class TrainerCheckpoint:
-    """Trainer checkpoint containing optimizer state and training metadata."""
+    """Trainer checkpoint containing optimizer and trainer state."""
 
-    model_state_dict: dict[str, Any]
     optimizer_state: dict[str, Any]
-    trainer_state: TrainerState
+    trainer_state: dict[str, Any]
+    model_state_dict: dict[str, Any] | None = None
 
 
 class TrainerCheckpointMixin:
-    """Mixin providing trainer checkpoint save/load functionality.
+    """Mixin providing core checkpoint save/load functionality for trainers.
 
-    Requires: model, optimizer, state (TrainerState), device, out_dir attributes.
+    Assumes the trainer has:
+    - self.model: Hyformer (inherits from PretrainedMixin)
+    - self.optimizer: torch.optim.Optimizer
+    - self.state: TrainerState (or compatible dataclass)
+    - self.device: torch.device
     """
 
-    def _get_underlying_model(self) -> torch.nn.Module:
-        """Get underlying model, unwrapping compiled models to avoid compile artifacts.
+    BEST_CHECKPOINT_FILE_NAME = "checkpoint.pt"
+    BEST_MODEL_CHECKPOINT_FILE_NAME = "model.pt"
+    CHECKPOINT_EPOCH_FILE_PATTERN = "checkpoint_epoch_{epoch}.pt"
+    MODEL_EPOCH_FILE_PATTERN = "model_epoch_{epoch}.pt"
 
-        Returns
-        -------
-        torch.nn.Module
-            The underlying model without compilation wrapper.
-        """
-        if hasattr(self.model, "_orig_mod"):  # type: ignore[attr-defined]
-            # Model is compiled with torch.compile(), use original model
-            return self.model._orig_mod  # type: ignore[attr-defined]
-        return self.model  # type: ignore[attr-defined]
-
-    @staticmethod
-    def _clean_state_dict_keys(state_dict: dict[str, Any]) -> dict[str, Any]:
-        """Remove compile-related prefixes from state dict keys.
+    def _build_checkpoint(self, include_model: bool = False) -> TrainerCheckpoint:
+        """Build checkpoint object with optimizer and trainer state.
 
         Parameters
         ----------
-        state_dict : dict[str, Any]
-            State dict that may contain keys with '_orig_mod.' prefix.
+        include_model : bool, default=False
+            If True, includes model state dict in checkpoint.
 
         Returns
         -------
-        dict[str, Any]
-            State dict with cleaned keys (no '_orig_mod.' prefix).
+        TrainerCheckpoint
+            Checkpoint object.
         """
-        cleaned = {}
-        prefix = "_orig_mod."
-        for key, value in state_dict.items():
-            if key.startswith(prefix):
-                cleaned[key[len(prefix) :]] = value
-            else:
-                cleaned[key] = value
-        return cleaned
-
-    def save_trainer_checkpoint(self, path: str | Path) -> None:
-        """Save trainer checkpoint."""
-        # Get underlying model to avoid saving compile artifacts
-        model_to_save = self._get_underlying_model()
-        # Get state dict and clean keys to remove any compile-related prefixes
-        model_state_dict = model_to_save.state_dict()
-        model_state_dict = self._clean_state_dict_keys(model_state_dict)
-
-        checkpoint = TrainerCheckpoint(
-            model_state_dict=model_state_dict,
+        return TrainerCheckpoint(
             optimizer_state=self.optimizer.state_dict(),  # type: ignore[attr-defined]
-            trainer_state=self.state,  # type: ignore[attr-defined]
-        )
-        path = Path(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        torch.save(
-            {
-                "model": checkpoint.model_state_dict,
-                "optimizer": checkpoint.optimizer_state,
-                "epoch": checkpoint.trainer_state.epoch,
-                "best_val_loss": checkpoint.trainer_state.best_val_loss,
-            },
-            path,
+            trainer_state=asdict(self.state),  # type: ignore[attr-defined]
+            model_state_dict=self.model.get_model_state_dict() if include_model else None,  # type: ignore[attr-defined]
         )
 
-    def load_trainer_checkpoint(self, path: str | Path) -> None:
-        """Load trainer checkpoint."""
-        from .trainer import TrainerState
-
-        data = torch.load(path, map_location=getattr(self, "device", None))
-        checkpoint = TrainerCheckpoint(
-            model_state_dict=data.get("model", {}),
-            optimizer_state=data["optimizer"],
-            trainer_state=TrainerState(
-                epoch=data.get("epoch", 0),
-                best_val_loss=data.get("best_val_loss", float("inf")),
-            ),
-        )
-        if checkpoint.model_state_dict:
-            # Load into underlying model to ensure correct loading
-            model_to_load = self._get_underlying_model()
-            # Clean keys in case checkpoint was saved with compile prefixes
-            cleaned_state_dict = self._clean_state_dict_keys(checkpoint.model_state_dict)
-            model_to_load.load_state_dict(cleaned_state_dict)
-        self.optimizer.load_state_dict(checkpoint.optimizer_state)  # type: ignore[attr-defined]
-        self.state = checkpoint.trainer_state  # type: ignore[attr-defined]
-
-    def _save_checkpoint(self, is_best: bool = False, epoch: int | None = None) -> None:
-        """Save full checkpoint (model + trainer).
-
-        Saves best checkpoint as "best.pt" (always overwrites).
-        Optionally saves periodic checkpoint if epoch is provided.
+    def _verify_checkpoint(self, path: Path) -> None:
+        """Verify checkpoint can be loaded and has required fields.
 
         Parameters
         ----------
-        is_best : bool, optional
-            Whether this is the best checkpoint so far. Saves as "best.pt".
-        epoch : int, optional
-            Epoch number for periodic checkpoint. If provided, saves as "checkpoint_epoch_{epoch}.pt".
+        path : Path
+            Path to checkpoint file to verify.
+
+        Raises
+        ------
+        RuntimeError
+            If checkpoint verification fails.
         """
-        if not self.out_dir:  # type: ignore[attr-defined]
-            return
+        try:
+            data = torch.load(path, map_location="cpu")
+            required_fields = ["optimizer_state", "trainer_state"]
+            missing_fields = [field for field in required_fields if field not in data]
+            if missing_fields:
+                raise RuntimeError(f"Checkpoint missing required fields: {missing_fields}")
+        except Exception as e:
+            raise RuntimeError(f"Checkpoint verification failed: {e}") from e
 
-        if is_best:
-            # Always save as "best.pt" (single checkpoint, overwrites on update)
-            filename = "best.pt"
-            path = self.out_dir / filename  # type: ignore[attr-defined]
-        elif epoch is not None:
-            # Save periodic checkpoint
-            filename = f"checkpoint_epoch_{epoch}.pt"
-            path = self.out_dir / filename  # type: ignore[attr-defined]
-        else:
-            # No checkpoint to save
-            return
+    def save_trainer_checkpoint(
+        self,
+        path: str | Path,
+        include_model: bool = False,
+        verify: bool = True,
+    ) -> None:
+        """Save trainer checkpoint with atomic writes and optional verification.
 
-        # Use mixin to get trainer checkpoint data format
-        with tempfile.NamedTemporaryFile(mode="wb", suffix=".pt", delete=False) as tmp_file:
-            tmp_path = Path(tmp_file.name)
+        Parameters
+        ----------
+        path : str | Path
+            Path to save checkpoint to.
+        include_model : bool, default=False
+            If True, includes model state dict in checkpoint. If False, only saves
+            optimizer and trainer state.
+        verify : bool, default=True
+            If True, verifies checkpoint can be loaded after saving.
+        """
+        path = Path(path)
+        temp_path = path.with_suffix(".tmp")
+        path.parent.mkdir(parents=True, exist_ok=True)
 
         try:
-            # Delegate trainer checkpoint saving to mixin to get consistent format
-            self.save_trainer_checkpoint(tmp_path)
-            trainer_data = torch.load(tmp_path, map_location=self.device)  # type: ignore[attr-defined]
+            checkpoint = self._build_checkpoint(include_model=include_model)
+            checkpoint_dict = asdict(checkpoint)
 
-            # Save full checkpoint (model is already in trainer_data from save_trainer_checkpoint)
-            torch.save(trainer_data, path)
-        finally:
-            tmp_path.unlink(missing_ok=True)
+            # Save to temporary file first
+            torch.save(checkpoint_dict, temp_path, _use_new_zipfile_serialization=True)
 
-    def _load_checkpoint(self, path: str | Path, resume_training: bool = True) -> None:
-        """Load full checkpoint (model + trainer).
+            # Verify checkpoint if requested
+            if verify:
+                self._verify_checkpoint(temp_path)
+
+            # Atomic rename
+            temp_path.replace(path)
+            logger.info(f"Checkpoint saved: {path}")
+        except Exception as e:
+            # Clean up temp file on error
+            if temp_path.exists():
+                temp_path.unlink()
+            logger.error(f"Failed to save checkpoint: {e}")
+            raise
+
+    def save_model_checkpoint(self, path: str | Path) -> None:
+        """Save model checkpoint only.
+
+        Uses PretrainedMixin.save_pretrained() for consistency.
+
+        Parameters
+        ----------
+        path : str | Path
+            Path to save model checkpoint to.
+        """
+        self.model.save_pretrained(path)  # type: ignore[attr-defined]
+
+    def _load_checkpoint(
+        self,
+        path: str | Path,
+        resume_training: bool = True,
+        strict: bool = False,
+        map_location: str | torch.device | None = None,
+    ) -> None:
+        """Load trainer checkpoint and optionally resume training.
 
         Parameters
         ----------
         path : str | Path
             Path to checkpoint file.
-        resume_training : bool, optional
-            Whether to resume training state.
+        resume_training : bool, default=True
+            If True, loads optimizer state and trainer state. If False, only loads model weights.
+        strict : bool, default=False
+            If True, raise error on missing/unexpected keys in optimizer/model state.
+            If False, log warnings.
+        map_location : str | torch.device | None, default=None
+            Device to load checkpoint on. If None, uses self.device.
+
+        Raises
+        ------
+        FileNotFoundError
+            If checkpoint file does not exist.
+        RuntimeError
+            If checkpoint loading fails.
         """
-        data = torch.load(path, map_location=self.device)  # type: ignore[attr-defined]
+        from .multitask import TrainerState
 
-        # Load model if present
-        if "model" in data:
-            # Load into underlying model to ensure correct loading
-            model_to_load = self._get_underlying_model()
-            # Clean keys in case checkpoint was saved with compile prefixes
-            cleaned_state_dict = self._clean_state_dict_keys(data["model"])
-            model_to_load.load_state_dict(cleaned_state_dict)
+        path = Path(path)
+        if not path.exists():
+            raise FileNotFoundError(f"Checkpoint not found: {path}")
 
+        map_location = map_location or self.device  # type: ignore[attr-defined]
+
+        try:
+            data = torch.load(path, map_location=map_location)
+        except Exception as e:
+            raise RuntimeError(f"Failed to load checkpoint file {path}: {e}") from e
+
+        # Build checkpoint object (handles missing fields gracefully for backward compatibility)
+        checkpoint = TrainerCheckpoint(
+            optimizer_state=data.get("optimizer_state", {}),
+            trainer_state=data.get("trainer_state", {}),
+            model_state_dict=data.get("model_state_dict"),
+        )
+
+        # Load model state dict if present in checkpoint
+        # Use PretrainedMixin method for consistency
+        if checkpoint.model_state_dict is not None:
+            self.model.load_state_dict_from_dict(checkpoint.model_state_dict, strict=strict)  # type: ignore[attr-defined]
+
+        # Load optimizer and trainer state if resuming training
         if resume_training:
-            # Delegate trainer checkpoint loading to mixin
-            # Create temporary checkpoint file with trainer data (excluding model, already loaded)
-            with tempfile.NamedTemporaryFile(mode="wb", suffix=".pt", delete=False) as tmp_file:
-                tmp_path = Path(tmp_file.name)
+            try:
+                self.optimizer.load_state_dict(checkpoint.optimizer_state)  # type: ignore[attr-defined]
+            except Exception as e:
+                if strict:
+                    raise RuntimeError(f"Failed to load optimizer state: {e}") from e
+                logger.warning(f"Failed to load optimizer state: {e}. Continuing without optimizer state.")
 
             try:
-                torch.save(
-                    {
-                        "model": {},  # Model already loaded, pass empty dict
-                        "optimizer": data["optimizer"],
-                        "epoch": data.get("epoch", 0),
-                        "best_val_loss": data.get("best_val_loss", float("inf")),
-                    },
-                    tmp_path,
-                )
-                self.load_trainer_checkpoint(tmp_path)
-            finally:
-                tmp_path.unlink(missing_ok=True)
+                self.state = TrainerState(**checkpoint.trainer_state)
+            except Exception as e:
+                raise RuntimeError(f"Failed to load trainer state: {e}") from e
+
+        logger.info(f"Loaded checkpoint: {path}")

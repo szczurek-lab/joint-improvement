@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import torch
-from torch import nn
+import torch.nn.functional as F
 
 
 def compute_lm_loss(
@@ -11,47 +11,20 @@ def compute_lm_loss(
     labels: torch.Tensor,
     shift_labels: bool = True,
 ) -> torch.Tensor:
-    """
-    Compute language modeling (causal LM) loss.
-
-    Computes cross-entropy loss for next-token prediction. Optionally shifts
-    labels to align with predictions (standard for causal language modeling).
-
-    Parameters
-    ----------
-    logits : torch.Tensor
-        Logits tensor of shape [B, T, vocab_size] where B is batch size,
-        T is sequence length, and vocab_size is vocabulary size.
-    labels : torch.Tensor
-        Target token IDs of shape [B, T].
-    shift_labels : bool, default=True
-        Whether to shift labels for causal LM. If True, shifts labels by one
-        position so that position i predicts position i+1.
-
-    Returns
-    -------
-    torch.Tensor
-        Loss tensor (scalar).
-
-    Examples
-    --------
-    >>> logits = torch.randn(2, 10, 32000)
-    >>> labels = torch.randint(0, 32000, (2, 10))
-    >>> loss = compute_lm_loss(logits, labels)
-    >>> loss.shape
-    torch.Size([])  # Scalar
-    """
+    """Compute language modeling loss."""
     if shift_labels:
-        # Shift so that tokens < n predict n (standard for causal LM)
         shift_logits = logits[..., :-1, :].contiguous()
         target_labels = labels[..., 1:].contiguous()
     else:
         shift_logits = logits
         target_labels = labels
 
-    # Flatten the tokens
-    loss_fct = nn.CrossEntropyLoss()
-    loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), target_labels.view(-1))
+    # Flatten and compute loss
+    batch_size, seq_len = shift_logits.shape[:2]
+    vocab_size = shift_logits.size(-1)
+    loss = F.cross_entropy(
+        shift_logits.view(batch_size * seq_len, vocab_size), target_labels.view(batch_size * seq_len), reduction="mean"
+    )
 
     return loss
 
@@ -59,58 +32,32 @@ def compute_lm_loss(
 def compute_mlm_loss(
     logits: torch.Tensor,
     labels: torch.Tensor,
-    vocab_size: int,
     label_smoothing: float = 0.0,
 ) -> torch.Tensor:
+    """Compute masked language modeling loss with optional label smoothing.
+
+    The loss is computed only over masked positions (where labels != -100).
+    Non-masked positions are ignored in the loss computation.
     """
-    Compute masked language modeling (MLM) loss with optional label smoothing.
+    batch_size, seq_len = logits.shape[:2]
+    vocab_size = logits.size(-1)
 
-    Computes cross-entropy loss for masked token prediction. Supports label
-    smoothing for regularization (BERT-style).
+    logits_flat = logits.contiguous().view(batch_size * seq_len, vocab_size)
+    labels_flat = labels.contiguous().view(batch_size * seq_len)
 
-    Parameters
-    ----------
-    logits : torch.Tensor
-        Logits tensor of shape [B, num_masked, vocab_size] or [B*num_masked, vocab_size]
-        where B is batch size and num_masked is number of masked positions.
-    labels : torch.Tensor
-        Target token IDs of shape [B, num_masked] or [B*num_masked].
-    vocab_size : int
-        Size of the vocabulary.
-    label_smoothing : float, default=0.0
-        Label smoothing factor. Smooths the one-hot labels by mixing with
-        uniform distribution. 0.0 means no smoothing (hard labels).
-        Typical values: 0.0-0.2.
+    # Create mask for valid (masked) positions
+    valid_mask = labels_flat != -100
 
-    Returns
-    -------
-    torch.Tensor
-        Loss tensor (scalar).
-
-    Examples
-    --------
-    >>> logits = torch.randn(2, 5, 32000)  # 5 masked positions
-    >>> labels = torch.randint(0, 32000, (2, 5))
-    >>> loss = compute_mlm_loss(logits, labels, vocab_size=32000, label_smoothing=0.1)
-    >>> loss.shape
-    torch.Size([])  # Scalar
-
-    Notes
-    -----
-    Label smoothing formula:
-        smooth_labels = (1 - smoothing) * one_hot + smoothing / vocab_size
-
-    This acts as regularization and prevents overconfident predictions.
-    """
-    # Flatten for loss computation
-    logits_flat = logits.view(-1, vocab_size)  # [B*num_masked, vocab_size]
-    labels_flat = labels.view(-1)  # [B*num_masked]
+    if not valid_mask.any():
+        # No masked positions, return zero loss
+        return torch.tensor(0.0, device=logits.device, dtype=logits.dtype, requires_grad=True)
 
     if label_smoothing > 0.0:
-        # Label smoothing: mix one-hot labels with uniform distribution
-        # Create one-hot labels
+        # Create one-hot labels only for valid positions
         one_hot = torch.zeros_like(logits_flat)
-        one_hot.scatter_(1, labels_flat.unsqueeze(1), 1.0)
+        valid_labels = labels_flat[valid_mask]
+        valid_indices = torch.arange(len(labels_flat), device=labels_flat.device)[valid_mask]
+        one_hot[valid_indices].scatter_(1, valid_labels.unsqueeze(1), 1.0)
 
         # Smooth labels: (1 - smoothing) * one_hot + smoothing / vocab_size
         smooth_labels = (1.0 - label_smoothing) * one_hot + label_smoothing / vocab_size
@@ -118,11 +65,14 @@ def compute_mlm_loss(
         # Compute cross-entropy loss with smoothed labels
         # log_softmax + nll_loss = cross_entropy
         log_probs = torch.nn.functional.log_softmax(logits_flat, dim=-1)
-        loss = -torch.sum(smooth_labels * log_probs, dim=-1).mean()
+        # Only compute loss for valid positions
+        loss = -torch.sum(smooth_labels * log_probs, dim=-1)
+        loss = loss[valid_mask].mean()
     else:
         # Standard cross-entropy loss (no smoothing)
-        loss_fct = nn.CrossEntropyLoss()
-        loss = loss_fct(logits_flat, labels_flat)
+        # Explicitly set ignore_index=-100 for MLM (default but explicit helps Inductor)
+        # F.cross_entropy with ignore_index automatically normalizes over non-ignored positions
+        loss = F.cross_entropy(logits_flat, labels_flat, ignore_index=-100, reduction="mean")
 
     return loss
 
@@ -180,10 +130,6 @@ def compute_binary_classification(
     if torch.isnan(labels).any():
         labels_clean[torch.isnan(labels)] = ignore_index
 
-    # Use ignore_index to mask out missing values
-    loss_fct = nn.CrossEntropyLoss(ignore_index=ignore_index, reduction=reduction)
-    loss = loss_fct(logits, labels_clean.long())
-
     # If reduction is mean, we need to account for missing values
     if reduction == "mean":
         # Count valid (non-missing) samples
@@ -191,13 +137,14 @@ def compute_binary_classification(
         num_valid = valid_mask.sum().float()
         if num_valid > 0:
             # Recompute with proper normalization
-            loss_fct_sum = nn.CrossEntropyLoss(ignore_index=ignore_index, reduction="sum")
-            loss_sum = loss_fct_sum(logits, labels_clean.long())
+            loss_sum = F.cross_entropy(logits, labels_clean.long(), ignore_index=ignore_index, reduction="sum")
             loss = loss_sum / num_valid
         else:
             # All samples are missing, return zero loss
             loss = torch.tensor(0.0, device=logits.device, requires_grad=True)
-
+    else:
+        # Use ignore_index to mask out missing values
+        loss = F.cross_entropy(logits, labels_clean.long(), ignore_index=ignore_index, reduction=reduction)
     return loss
 
 
@@ -264,8 +211,7 @@ def compute_multilabel_classification(
         valid_mask = torch.ones_like(labels_float, dtype=torch.bool)
 
     # Use BCEWithLogitsLoss
-    loss_fct = nn.BCEWithLogitsLoss(reduction="none")  # No reduction for masking
-    loss_per_label = loss_fct(logits, labels_float)  # [B, num_labels]
+    loss_per_label = F.binary_cross_entropy_with_logits(logits, labels_float, reduction="none")  # [B, num_labels]
 
     # Apply mask to ignore NaN values
     if torch.isnan(labels).any():

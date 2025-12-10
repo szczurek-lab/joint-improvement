@@ -20,7 +20,7 @@ from joint_improvement.utils.config import BaseConfig
 
 from .checkpoint import TrainerCheckpointMixin
 from .device_optimizations import setup_device_optimizations
-from .utils import UniformTaskSampler
+from .task_sampler import UniformTaskSampler
 
 
 @dataclass
@@ -111,7 +111,17 @@ class MultiTaskTrainer(TrainerCheckpointMixin):
         ) = setup_device_optimizations(config, device)
 
         if config.compile:
-            self.model = torch.compile(self.model, mode=compile_mode)
+            # Inductor config is already set in setup_device_optimizations
+            # Use fullgraph=False to allow fallback for parts with dynamic shapes
+            # This prevents InductorError when backward pass encounters dynamic shapes
+            # that inductor can't properly codegen. The model will still benefit from
+            # forward pass compilation while falling back to eager execution for problematic parts.
+            # Dynamic shapes are handled automatically by PyTorch's compiler.
+            self.model = torch.compile(
+                self.model,
+                mode=compile_mode,
+                fullgraph=False,  # Allow partial compilation fallback
+            )
 
         if self.out_dir:
             self.out_dir.mkdir(parents=True, exist_ok=True)
@@ -377,7 +387,12 @@ class MultiTaskTrainer(TrainerCheckpointMixin):
 
                 if weighted_val_loss < self.state.best_val_loss:
                     self.state.best_val_loss = weighted_val_loss
-                    self._save_checkpoint(is_best=True)
+                    if self.out_dir:
+                        # Save trainer checkpoint (optimizer + trainer state)
+                        best_trainer_path = self.out_dir / self.BEST_CHECKPOINT_FILE_NAME
+                        self.save_trainer_checkpoint(best_trainer_path)
+                        # Update best model checkpoint (only when it's actually the best)
+                        self.model.save_pretrained(self.out_dir / self.BEST_MODEL_CHECKPOINT_FILE_NAME)
                     not_improved = 0
                     logger.info(f"New best weighted validation loss: {self.state.best_val_loss:.4f}")
                 else:
@@ -390,9 +405,15 @@ class MultiTaskTrainer(TrainerCheckpointMixin):
 
             # Periodic checkpoint (in addition to best checkpoint)
             if (
-                self.config.checkpoint_every_n_epochs is not None
+                self.out_dir
+                and self.config.checkpoint_every_n_epochs is not None
                 and self.state.epoch % self.config.checkpoint_every_n_epochs == 0
             ):
-                self._save_checkpoint(is_best=False, epoch=self.state.epoch)
+                # Save trainer checkpoint
+                ckpt_path = self.out_dir / self.CHECKPOINT_EPOCH_FILE_PATTERN.format(epoch=self.state.epoch)
+                self.save_trainer_checkpoint(ckpt_path)
+                # Save model checkpoint
+                model_path = self.out_dir / self.MODEL_EPOCH_FILE_PATTERN.format(epoch=self.state.epoch)
+                self.model.save_pretrained(model_path)
 
             self.state.epoch += 1
