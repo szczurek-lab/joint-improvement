@@ -4,8 +4,6 @@ from __future__ import annotations
 import torch
 from torch import nn
 
-from joint_improvement.generators import UnconditionalGeneratorMixin
-
 from .config import HyformerConfig
 from .layers.kv_cache import KVCache
 from .layers.prediction_head import PredictionHeadModule
@@ -15,7 +13,7 @@ from .outputs import ModelOutput
 from .pretrained import PretrainedMixin
 
 
-class Hyformer(PretrainedMixin, UnconditionalGeneratorMixin, nn.Module):
+class Hyformer(PretrainedMixin, nn.Module):
     """
     Hyformer backbone model.
 
@@ -309,18 +307,37 @@ class Hyformer(PretrainedMixin, UnconditionalGeneratorMixin, nn.Module):
         >>> config = HyformerConfig.from_pretrained("configs/hyformer/base.json")
         >>> model = Hyformer.from_config(config)
         """
-        # Only pass parameters that Hyformer.__init__() accepts
         config_dict = config.to_dict()
-        return cls(
-            vocab_size=int(config_dict["vocab_size"]),
-            d_model=int(config_dict["d_model"]),
-            n_heads=int(config_dict["n_heads"]),
-            n_layers=int(config_dict["n_layers"]),
-            max_seq_len=int(config_dict["max_seq_len"]),
-            num_prediction_tasks=int(config_dict["num_prediction_tasks"])
+        generator_type = config_dict["generator_type"]
+        init_kwargs = {
+            "vocab_size": int(config_dict["vocab_size"]),
+            "d_model": int(config_dict["d_model"]),
+            "n_heads": int(config_dict["n_heads"]),
+            "n_layers": int(config_dict["n_layers"]),
+            "max_seq_len": int(config_dict["max_seq_len"]),
+            "num_prediction_tasks": int(config_dict["num_prediction_tasks"])
             if config_dict.get("num_prediction_tasks") is not None
             else None,
-            attn_dropout=config_dict.get("attn_dropout", 0.0),
-            resid_dropout=config_dict.get("resid_dropout", 0.0),
-            eps=config_dict.get("eps", 1e-6),
-        )
+            "attn_dropout": config_dict.get("attn_dropout", 0.0),
+            "resid_dropout": config_dict.get("resid_dropout", 0.0),
+            "eps": config_dict.get("eps", 1e-6),
+        }
+        if generator_type == "unconditional":
+            from joint_improvement.generators import UnconditionalGeneratorMixin
+
+            HyformerClass = type("Hyformer", (UnconditionalGeneratorMixin, cls), {})
+            return HyformerClass(**init_kwargs)
+        elif generator_type == "tasar":
+            from joint_improvement.generators import TasarMixin
+
+            HyformerClass = type("Hyformer", (TasarMixin, cls), {})
+            return HyformerClass(**init_kwargs)
+        elif generator_type == "tasar_legacy":
+            from joint_improvement.generators import TasarMixinLegacy
+
+            HyformerClass = type("Hyformer", (TasarMixinLegacy, cls), {})
+            return HyformerClass(**init_kwargs)
+        else:
+            raise ValueError(
+                f"Unknown generator_type '{generator_type}'. Available: 'unconditional', 'tasar', 'tasar_legacy'"
+            )

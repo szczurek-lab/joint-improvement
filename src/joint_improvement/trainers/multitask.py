@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 import time
 from dataclasses import dataclass, field
@@ -264,6 +265,45 @@ class MultiTaskTrainer(TrainerCheckpointMixin):
                 raise ValueError("Model output loss is None; ensure labels/targets are provided.")
             return outputs.loss.item()
 
+    def _save_evaluation_losses_json(self, task_losses: dict[str, float], weighted_loss: float) -> None:
+        """Save evaluation losses to JSON file.
+
+        Parameters
+        ----------
+        task_losses : dict[str, float]
+            Dictionary mapping task names to their loss values.
+        weighted_loss : float
+            Weighted validation loss value.
+        """
+        if not self.out_dir:
+            return
+
+        eval_file = self.out_dir / "evaluation_losses.json"
+
+        # Load existing evaluation results if file exists
+        evaluation_history: dict[str, dict[str, float | dict[str, float]]] = {}
+        if eval_file.exists():
+            try:
+                with eval_file.open() as f:
+                    evaluation_history = json.load(f)
+            except (json.JSONDecodeError, OSError) as e:
+                logger.warning(f"Failed to load existing evaluation losses from {eval_file}: {e}")
+
+        # Create entry for current epoch
+        epoch_key = f"epoch_{self.state.epoch}"
+        evaluation_history[epoch_key] = {
+            "weighted_loss": weighted_loss,
+            "per_task": task_losses,
+        }
+
+        # Save updated evaluation history
+        try:
+            with eval_file.open("w") as f:
+                json.dump(evaluation_history, f, indent=2)
+            logger.debug(f"Saved evaluation losses to {eval_file}")
+        except OSError as e:
+            logger.warning(f"Failed to save evaluation losses to {eval_file}: {e}")
+
     @torch.inference_mode()
     def evaluate(self, val_loaders: dict[str, DataLoader]) -> tuple[dict[str, float], float]:
         """Evaluate model."""
@@ -290,6 +330,9 @@ class MultiTaskTrainer(TrainerCheckpointMixin):
 
         per_task_str = ", ".join(f"{task}: {loss:.4f}" for task, loss in task_losses.items())
         logger.info(f"Eval epoch {self.state.epoch}: loss {weighted_val_loss:.4f}, per_task [{per_task_str}]")
+
+        # Save evaluation losses to JSON
+        self._save_evaluation_losses_json(task_losses, weighted_val_loss)
 
         if was_training:
             self.model.train()

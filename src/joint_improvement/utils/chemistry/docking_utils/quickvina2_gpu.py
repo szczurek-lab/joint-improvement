@@ -16,11 +16,136 @@ import os
 import subprocess
 import tempfile
 import shutil
+from pathlib import Path
 import numpy as np
 from joint_improvement.utils.chemistry.docking_utils.oracle_component import OracleComponent
 from joint_improvement.utils.chemistry.docking_utils.dataclass import OracleComponentParameters
 from rdkit import Chem
 from rdkit.Chem import AllChem, Mol
+
+
+class DockingVinaGPU(object):
+    """GPU docking wrapper that provides SMILES-based interface compatible with DockingVina."""
+    
+    def __init__(self, target: str, gpu_binary: str | None = None, 
+                 gpu_receptor: str | None = None, gpu_reference_ligand: str | None = None,
+                 gpu_results_dir: str | None = None, gpu_thread: int = 5000):
+        super().__init__()
+        
+        # Get the directory where docking_utils module is located
+        module_dir = Path(__file__).parent
+        
+        # Set up GPU parameters - use provided values or try to infer from environment/target
+        self.target = target
+        
+        # Try to get GPU binary from environment or use default location
+        if gpu_binary is None:
+            gpu_binary = os.environ.get("QUICKVINA2_GPU_BINARY", None)
+        if gpu_binary is None or not os.path.exists(gpu_binary):
+            raise ValueError(
+                f"QuickVina2-GPU binary not found. Please provide gpu_binary parameter "
+                f"or set QUICKVINA2_GPU_BINARY environment variable."
+            )
+        
+        # Receptor file (same as CPU version)
+        if gpu_receptor is None:
+            gpu_receptor = str(module_dir / f'{target}.pdbqt')
+        if not os.path.exists(gpu_receptor):
+            raise ValueError(f"Receptor file not found: {gpu_receptor}")
+        
+        # Reference ligand - try to find it or use a default location
+        if gpu_reference_ligand is None:
+            # Try environment variable first
+            gpu_reference_ligand = os.environ.get(f"QUICKVINA2_GPU_REF_{target.upper()}", None)
+            # If not found, try common location
+            if gpu_reference_ligand is None:
+                ref_ligand_path = module_dir / f'{target}_ref.pdb'
+                if ref_ligand_path.exists():
+                    gpu_reference_ligand = str(ref_ligand_path)
+        
+        if gpu_reference_ligand is None or not os.path.exists(gpu_reference_ligand):
+            raise ValueError(
+                f"Reference ligand PDB file not found for target {target}. "
+                f"Please provide gpu_reference_ligand parameter or set "
+                f"QUICKVINA2_GPU_REF_{target.upper()} environment variable."
+            )
+        
+        # Results directory
+        if gpu_results_dir is None:
+            gpu_results_dir = os.environ.get("QUICKVINA2_GPU_RESULTS_DIR", 
+                                            str(Path(tempfile.gettempdir()) / "gpu_docking_results"))
+        
+        # Initialize QuickVina2_GPU
+        params = OracleComponentParameters(
+            name="quickvina2_gpu",
+            reward_shaping_function_parameters={},
+            specific_parameters={
+                "binary": gpu_binary,
+                "receptor": gpu_receptor,
+                "reference_ligand": gpu_reference_ligand,
+                "thread": gpu_thread,
+                "results_dir": gpu_results_dir,
+                "force_field": "uff",
+            }
+        )
+        self.gpu_docker = QuickVina2_GPU(params)
+        self.oracle_calls = 0
+    
+    def predict(self, smiles_list: list[str]) -> list[float]:
+        """
+        Predict docking scores for a list of SMILES strings.
+        
+        Parameters
+        ----------
+        smiles_list : list[str]
+            List of SMILES strings
+            
+        Returns
+        -------
+        list[float]
+            List of docking scores (or 99.9 for failures, matching DockingVina behavior)
+        """
+        # Convert SMILES to RDKit Mols
+        mols = []
+        valid_indices = []
+        for idx, smiles in enumerate(smiles_list):
+            mol = Chem.MolFromSmiles(smiles)
+            if mol is not None:
+                mols.append(mol)
+                valid_indices.append(idx)
+        
+        if len(mols) == 0:
+            return [99.9] * len(smiles_list)
+        
+        # Run GPU docking
+        mols_array = np.array(mols)
+        scores = self.gpu_docker(mols_array, oracle_calls=self.oracle_calls)
+        self.oracle_calls += 1
+        
+        # Map scores back to original list (with 99.9 for invalid SMILES or failures)
+        result = [99.9] * len(smiles_list)
+        zero_count = 0
+        for i, idx in enumerate(valid_indices):
+            if i < len(scores):
+                score = float(scores[i])
+                # QuickVina2_GPU returns 0.0 for failures
+                # Note: 0.0 could be a valid score (very poor binding), but typically indicates failure
+                # We'll keep 0.0 as-is for now, but mark very small scores as potentially failed
+                if score == 0.0:
+                    zero_count += 1
+                    # Keep 0.0 but it will be filtered out in comparison (as it's likely a failure)
+                result[idx] = score
+        
+        # Debug: warn if all scores are 0.0 (likely indicates GPU docking failure)
+        if zero_count == len(scores) and len(scores) > 0:
+            import warnings
+            warnings.warn(
+                f"All GPU docking scores are 0.0. This likely indicates GPU docking failed. "
+                f"Check GPU binary, receptor file, and reference ligand configuration.",
+                UserWarning
+            )
+        
+        return result
 
 
 class QuickVina2_GPU(OracleComponent):

@@ -23,7 +23,8 @@ class GeneratorMixin:
     def _apply_top_k(self, logits: torch.Tensor, top_k: int) -> torch.Tensor:
         v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
         logits = logits.clone()
-        logits[logits < v[:, [-1]]] = -float("Inf")
+        # Threshold against the kth logit along the last dimension (not sequence dim)
+        logits[logits < v[..., -1:]] = -float("Inf")
         return logits
 
     def _apply_top_p(self, logits: torch.Tensor, top_p: float) -> torch.Tensor:

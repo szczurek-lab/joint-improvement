@@ -26,10 +26,10 @@ from joint_improvement.utils import (
 
 
 def load_model(
-    model_config: Path,
-    model_ckpt: Path | None = None,
+    model_config: Path | str,
+    model_ckpt: Path | str | None = None,
     device: str = "cpu",
-    config_dump_dir: Path | None = None,
+    config_dump_dir: Path | str | None = None,
 ) -> Hyformer:
     """Load or initialize Hyformer model.
 
@@ -50,6 +50,10 @@ def load_model(
     Hyformer
         Initialized or loaded model.
     """
+    model_config = Path(model_config)
+    model_ckpt = Path(model_ckpt) if model_ckpt is not None else None
+    config_dump_dir = Path(config_dump_dir) if config_dump_dir is not None else None
+
     config = HyformerConfig.from_pretrained(model_config)
 
     if config_dump_dir is not None:

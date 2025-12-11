@@ -210,7 +210,14 @@ class SMILESTokenizer:
 
         return token_ids
 
-    def decode(self, token_ids: list[int], skip_special_tokens: bool = True) -> str:
+    def decode(self, token_ids: list[int] | torch.Tensor, skip_special_tokens: bool = True) -> str:
+        """Decode a sequence of token IDs to a SMILES string.
+
+        Accepts plain Python lists or PyTorch tensors (CPU/GPU). Token IDs are
+        first normalized to Python ints to ensure lookups succeed when the input
+        contains torch scalar types.
+        """
+        normalized_ids = token_ids.tolist() if isinstance(token_ids, torch.Tensor) else [int(t) for t in token_ids]
         tokens = []
         special_tokens_set: set[str] = {
             self.bos_token,
@@ -221,9 +228,10 @@ class SMILESTokenizer:
             special_tokens_set.add(self.mask_token)
         if self.unk_token is not None:
             special_tokens_set.add(self.unk_token)
+        special_tokens_set.update(self.additional_special_tokens)
         special_tokens_set.update(self.task_tokens.values())
 
-        for token_id in token_ids:
+        for token_id in normalized_ids:
             token = self._convert_id_to_token(token_id)
             if skip_special_tokens and token in special_tokens_set:
                 continue

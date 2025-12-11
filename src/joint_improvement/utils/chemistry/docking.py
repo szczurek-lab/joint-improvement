@@ -1,14 +1,11 @@
-"""Docking score calculation utilities for molecular properties.
-
-This module provides a simple interface for calculating docking scores using
-QuickVina2. The implementation follows the Saturn oracle component pattern
-for consistency with the broader codebase.
-"""
+"""Docking score calculation utilities for molecular properties."""
 
 from __future__ import annotations
 
+import numpy as np
+from numpy.typing import NDArray
+
 try:
-    import numpy as np
     from rdkit import Chem, RDLogger
 
     # Suppress RDKit warnings
@@ -19,34 +16,38 @@ except ImportError:
     _RDKIT_AVAILABLE = False
     Chem = None
     RDLogger = None
-    np = None
 
 try:
     from joint_improvement.utils.chemistry.docking_utils.quickvina2 import DockingVina
+    from joint_improvement.utils.chemistry.docking_utils.quickvina2_gpu import (
+        DockingVinaGPU,
+    )
 
     _DOCKING_AVAILABLE = True
+    _DOCKING_IMPORT_ERROR: str | None = None
 except ImportError as e:
     _DOCKING_AVAILABLE = False
     DockingVina = None
+    DockingVinaGPU = None
     _DOCKING_IMPORT_ERROR = str(e)
 
 
 # Docking score thresholds for each target (lower scores indicate better binding)
 TARGET_DOCKING_THRESHOLDS: dict[str, float] = {
-    "braf": 10.3,
-    "parp1": 10.0,
-    "fa7": 8.5,
-    "jak2": 9.1,
-    "5ht1b": 8.7845,
+    "braf": -10.3,
+    "parp1": -10.0,
+    "fa7": -8.5,
+    "jak2": -9.1,
+    "5ht1b": -8.7845,
 }
 
-# Singleton instance for docking oracle
-_docking_instance: DockingVina | None = None
-_docking_target: str | None = None
+# Singleton instances for docking oracle (one per device)
+_docking_instances: dict[str, DockingVina] = {}
+_docking_targets: dict[str, str] = {}
 
 
-def calculate_docking(smiles: str, target: str = "fa7") -> float:
-    """Calculate the docking score of a molecule using QuickVina2.
+def calculate_docking(smiles: str, target: str = "fa7", device: str = "cpu") -> float:
+    """Calculate the docking score of a molecule.
 
     Parameters
     ----------
@@ -55,6 +56,9 @@ def calculate_docking(smiles: str, target: str = "fa7") -> float:
     target : str, optional
         Target protein for docking. Supported targets: 'fa7', 'parp1', '5ht1b', 'jak2', 'braf'.
         Default is 'fa7'.
+    device : str, optional
+        Device to use for docking. Options: 'cpu' (default) or 'gpu'.
+        Note: GPU support requires QuickVina2-GPU with additional setup.
 
     Returns
     -------
@@ -69,25 +73,8 @@ def calculate_docking(smiles: str, target: str = "fa7") -> float:
 
     Notes
     -----
-    This function uses QuickVina2 to perform molecular docking and calculate
-    binding scores. The docking setup requires:
-    - QuickVina2 binary (qvina02) to be available
-    - Receptor PDBQT files for the specified target
-    - OpenBabel for 3D structure generation
-
-    Docking scores are typically negative values where lower (more negative)
-    values indicate better binding affinity. The score represents the predicted
-    binding free energy in kcal/mol.
-
-    The function uses a singleton pattern to avoid reinitializing the docking
-    setup on every call. If the target changes, a new instance will be created.
-
-    Supported targets and their box configurations:
-    - fa7: (10.131, 41.879, 32.097) center, (20.673, 20.198, 21.362) size
-    - parp1: (26.413, 11.282, 27.238) center, (18.521, 17.479, 19.995) size
-    - 5ht1b: (-26.602, 5.277, 17.898) center, (22.5, 22.5, 22.5) size
-    - jak2: (114.758, 65.496, 11.345) center, (19.033, 17.929, 20.283) size
-    - braf: (84.194, 6.949, -7.081) center, (22.032, 19.211, 14.106) size
+    RDKit and docking utilities are optional dependencies. Install RDKit with:
+    ``pip install rdkit`` or ``conda install -c conda-forge rdkit``.
     """
     if not _RDKIT_AVAILABLE:
         raise ImportError(
@@ -102,38 +89,50 @@ def calculate_docking(smiles: str, target: str = "fa7") -> float:
             error_msg += f"\nImport error: {_DOCKING_IMPORT_ERROR}"
         raise ImportError(error_msg)
 
+    if device not in {"cpu", "gpu"}:
+        raise ValueError("device must be 'cpu' or 'gpu'")
+
     try:
         mol = Chem.MolFromSmiles(smiles)
         if mol is None:
             return float("nan")
 
-        # Use singleton pattern, but recreate if target changes
-        global _docking_instance, _docking_target
-        if _docking_instance is None or _docking_target != target:
-            _docking_instance = DockingVina(target)
-            _docking_target = target
+        global _docking_instances, _docking_targets
+        instance_key = f"{device}_{target}"
+        if instance_key not in _docking_instances:
+            if device == "gpu":
+                if DockingVinaGPU is None:
+                    raise ImportError("DockingVinaGPU is unavailable.")
+                _docking_instances[instance_key] = DockingVinaGPU(target)
+            else:
+                if DockingVina is None:
+                    raise ImportError("DockingVina is unavailable.")
+                _docking_instances[instance_key] = DockingVina(target)
+            _docking_targets[instance_key] = target
 
-        # DockingVina.predict expects a list of SMILES
-        scores = _docking_instance.predict([smiles])
-        if len(scores) == 0:
+        scores = _docking_instances[instance_key].predict([smiles])
+        if not scores:
             return float("nan")
 
         return float(scores[0])
-
     except Exception:
         return float("nan")
 
 
-def calculate_docking_batch(smiles_list: list[str], target: str) -> list[float]:
-    """Calculate docking scores for a batch of molecules using QuickVina2.
+def calculate_docking_batch(
+    smiles_list: list[str] | NDArray[np.str_], target: str, device: str = "cpu"
+) -> NDArray[np.float64]:
+    """Calculate docking scores for a batch of molecules.
 
     Parameters
     ----------
     smiles_list : list[str]
         List of SMILES string representations of molecules.
-    target : str, optional
+    target : str
         Target protein for docking. Supported targets: 'fa7', 'parp1', '5ht1b', 'jak2', 'braf'.
-        Default is 'fa7'.
+    device : str, optional
+        Device to use for docking. Options: 'cpu' (default) or 'gpu'.
+        Note: GPU support requires QuickVina2-GPU with additional setup.
 
     Returns
     -------
@@ -148,9 +147,8 @@ def calculate_docking_batch(smiles_list: list[str], target: str) -> list[float]:
 
     Notes
     -----
-    This function is more efficient than calling calculate_docking multiple times
-    as it processes all molecules in a single batch. See calculate_docking for
-    more details on docking scores and requirements.
+    RDKit and docking utilities are optional dependencies. Install RDKit with:
+    ``pip install rdkit`` or ``conda install -c conda-forge rdkit``.
     """
     if not _RDKIT_AVAILABLE:
         raise ImportError(
@@ -165,16 +163,11 @@ def calculate_docking_batch(smiles_list: list[str], target: str) -> list[float]:
             error_msg += f"\nImport error: {_DOCKING_IMPORT_ERROR}"
         raise ImportError(error_msg)
 
-    try:
-        # Use singleton pattern, but recreate if target changes
-        global _docking_instance, _docking_target
-        if _docking_instance is None or _docking_target != target:
-            _docking_instance = DockingVina(target)
-            _docking_target = target
+    if device not in {"cpu", "gpu"}:
+        raise ValueError("device must be 'cpu' or 'gpu'")
 
-        # DockingVina.predict expects a list of SMILES
-        scores = _docking_instance.predict(smiles_list)
-        return [float(score) if score is not None else float("nan") for score in scores]
-
-    except Exception:
-        return [float("nan")] * len(smiles_list)
+    vectorized_docking = np.vectorize(
+        lambda smi: calculate_docking(smi, target=target, device=device),
+        otypes=[float],
+    )
+    return vectorized_docking(smiles_list)

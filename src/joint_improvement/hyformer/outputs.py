@@ -17,5 +17,15 @@ class ModelOutput:
     loss: torch.Tensor | None = None
     extras: dict[str, Any] | None = None
 
+    def __getitem__(self, key: str) -> Any:
+        """Provide dict-style access for backward compatibility."""
+        if key == "logits":
+            return self.logits
+        if key == "loss":
+            return self.loss
+        if key == "extras":
+            return self.extras
+        raise KeyError(f"ModelOutput has no key '{key}'")
+
 
 __all__ = ["ModelOutput"]

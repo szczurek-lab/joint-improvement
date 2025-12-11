@@ -36,6 +36,7 @@ chemistry = [
 docking = [
     "openbabel-wheel",
     "rdkit",
+    "pymoo",
 ]
 
 [tool.ruff]
@@ -45,6 +46,8 @@ extend-exclude = [
     "**/incremental_sbs.py",
     "**/stochastic_beam_search.py",
     "**/utils/chemistry/docking_utils/**",
+    "**/utils/chemistry/synthesizability_utils/**",
+    "**/generators/utils/**",
 ]
 
 [tool.ruff.format]
@@ -113,6 +116,8 @@ exclude = [
     ".*/incremental_sbs\\.py$",
     ".*/stochastic_beam_search\\.py$",
     ".*/docking_utils/.*",
+    ".*/synthesizability_utils/.*",
+    ".*/generators/utils/.*",
 ]
 
 [tool.hatch.build.targets.sdist]
@@ -126,4 +131,11 @@ testpaths = ["tests"]
 
 [tool.coverage.run]
 branch = true
-omit = ["*/.conda/*", "*/tests/*", "*/.Y/*", "*/docking_utils/*"]
+omit = [
+    "*/.conda/*",
+    "*/tests/*",
+    "*/.Y/*",
+    "*/docking_utils/*",
+    "*/synthesizability_utils/*",
+    "*/generators/utils/*",
+]

@@ -5,7 +5,7 @@ stochastic beam search with advantage-weighted sampling for conditional generati
 
 References
 ----------
-  Official Gumbeldore implementation: https://github.com/grimmlab/gumbeldore
+  Official TASAR implementation: https://github.com/grimmlab/graphxform
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any, TypeAlias
 import torch
 
 from .generator import GeneratorMixin
-from .utils.gumbeldore.incremental_sbs import IncrementalSBS
+from .utils.tasar.incremental_sbs import IncrementalSBS
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -26,15 +26,15 @@ if TYPE_CHECKING:
 
     from joint_improvement.hyformer.model import Hyformer
 
-    from .utils.gumbeldore.stochastic_beam_search import BeamLeaf, State
+    from .utils.tasar.stochastic_beam_search import BeamLeaf, State
 
 _LOGGER = logging.getLogger(__name__)
 StateList: TypeAlias = list[torch.Tensor]
 StateTensor: TypeAlias = torch.Tensor
 
 
-class GumbeldoreMixin(GeneratorMixin):
-    """Gumbeldore sampling-based generation."""
+class TasarMixin(GeneratorMixin):
+    """TASAR (stochastic beam search) generation mixin."""
 
     def _cast_to_tensor(self, states: StateList) -> torch.Tensor:
         return torch.stack(states, dim=0)
@@ -54,7 +54,7 @@ class GumbeldoreMixin(GeneratorMixin):
         if top_k is not None:
             logits = self._apply_top_k(logits, top_k=top_k)
         log_probs = self._compute_log_probs(logits)
-        output_states: StateList = self._cast_to_states(log_probs.cpu().numpy())
+        output_states: StateList = self._cast_to_states(log_probs.detach().cpu().numpy())
         return output_states
 
     def _child_transition_fn(
@@ -99,25 +99,45 @@ class GumbeldoreMixin(GeneratorMixin):
             memory_aggressive=False,
         )
 
+    def generate_batch(
+        self,
+        prefix_input_ids: torch.LongTensor,
+        num_samples: int,
+        max_new_tokens: int,
+        advantage_fn: Callable[[float], float],
+        eos_token_id: int,
+        oracle_fn: Callable[[StateTensor], float] | None = None,
+        temperature: float = 1.0,
+        top_k: int | None = None,
+    ) -> torch.FloatTensor:
+        """Generate multiple sequences using Tasar."""
+        return self.generate(
+            prefix_input_ids=prefix_input_ids,
+            advantage_fn=advantage_fn,
+            eos_token_id=eos_token_id,
+            oracle_fn=oracle_fn,
+            temperature=temperature,
+            top_k=top_k,
+        )
+
     def generate(
         self,
         prefix_input_ids: torch.LongTensor,
-        max_sequence_length: int,
         advantage_fn: Callable[[float], float],
         eos_token_id: int,
         oracle_fn: Callable[[StateTensor], float] | None = None,
         temperature: float = 1.0,
         top_k: int | None = None,
         beam_width: int = 32,
-        num_rounds: int = 4,
-        advantage_constant: float = 1.0,
-        normalize_advantage_value: bool = True,
-        min_nucleus_top_p: float = 1.0,
+        nucleus_top_p: float = 1.0,
+        max_sequence_length: int = 128,
+        deterministic: bool = False,
+        replan_steps: int = 10,
     ) -> torch.FloatTensor:
         """Generate sequences using incremental stochastic beam search.
 
         This method performs conditional sequence generation using the incremental stochastic beam search (SBS) approach
-        and Gumbeldore-style log probability updates.
+        and TASAR-style log probability updates.
 
         Parameters
         ----------
@@ -142,14 +162,10 @@ class GumbeldoreMixin(GeneratorMixin):
             Top-k value for the logits.
         beam_width : int
             Beam width for one round of SBS.
-        num_rounds : int
-            Number of SBS rounds, where we update the log-probs after each round.
-        advantage_constant : float
-            Constant for advantage calculation in Gumbeldore.
-        normalize_advantage_value : bool
-            Min-max normalize advantage values, to set the highest/lowest advantage to 1/-1.
-        min_nucleus_top_p : float
+        nucleus_top_p : float
             Minimum nucleus (top-p) sampling parameter.
+        replan_steps : int
+            Number of SBS rounds, where we update the log-probs after each round.
 
         Returns
         -------
@@ -184,55 +200,31 @@ class GumbeldoreMixin(GeneratorMixin):
             leaf_evaluation_fn=leaf_evaluation_fn,
         )
 
-        result = _sampler.perform_incremental_sbs(
-            beam_width=beam_width,
-            num_rounds=num_rounds,
-            log_prob_update_type="gumbeldore",
-            advantage_constant=advantage_constant,
-            min_max_normalize_advantage=normalize_advantage_value,
-            expected_value_use_simple_mean=False,
-            use_pure_outcomes=False,
-            normalize_advantage_by_visit_count=False,
-            perform_first_round_deterministic=False,
-            min_nucleus_top_p=min_nucleus_top_p,
-            return_round_info=False,
+        result = _sampler.perform_tasar(
+            beam_width=beam_width, nucleus_top_p=nucleus_top_p, replan_steps=replan_steps, deterministic=deterministic
         )
 
-        return self._cast_incremental_sbs_result(result)
+        return self._cast_tasar_result(result)
 
-    def _cast_incremental_sbs_result(self, result: list[list[BeamLeaf]]) -> list[list[State]]:
+    def _cast_tasar_result(self, result: list[list[BeamLeaf]]) -> list[list[State]]:
         output_result = result[0]
         return [leaf.state for leaf in output_result]
 
-    def _get_model_logits(self, input_ids: torch.LongTensor) -> torch.FloatTensor:
+    @torch.inference_mode()
+    def _get_model_logits(self: Hyformer, input_ids: torch.LongTensor) -> torch.FloatTensor:  # type: ignore[misc]
+        logits = self.forward(input_ids=input_ids, task="lm")["logits"]  # type: ignore[attr-defined]
+        return logits[:, [-1]]  # next token logits
+
+    @torch.inference_mode()
+    def _get_model_predictions(self, input_ids: torch.LongTensor) -> float:
         raise NotImplementedError("Subclass must implement this method.")
 
 
-class GumbeldoreMixinV1(GumbeldoreMixin):  # type: ignore[misc]
-    """Gumbeldore sampling-based generation for V1 models (legacy)."""
-
-    @torch.inference_mode()
-    def _get_model_logits(self: Hyformer, input_ids: torch.LongTensor) -> torch.FloatTensor:  # type: ignore[misc]
-        """Return logits for the next token of shape (batch_size, 1, vocab_size)."""
-        output = self.forward(input_ids=input_ids, attention_mask=None, task="lm", use_cache=False)
-        logits = output["logits"]
-        return logits[:, [-1]]
-
-    @torch.inference_mode()
-    def _get_model_predictions(self: Hyformer, input_ids: torch.LongTensor) -> float:  # type: ignore[misc]
-        """Return predictions for the downstream task, e.g., of shape (batch_size, num_tasks) for regression."""
-        input_ids = input_ids.unsqueeze(0)  # equivalent to batch size == 1
-        attention_mask = torch.ones_like(input_ids, dtype=torch.bool)
-        return self.predict(input_ids=input_ids, attention_mask=attention_mask).item()  # type: ignore[attr-defined]
-
-
-class GumbeldoreMixinV2(GumbeldoreMixin):  # type: ignore[misc]
-    """Gumbeldore sampling-based generation for V2 models (legacy)."""
-
+class TasarMixinLegacy(TasarMixin):  # type: ignore[misc]
     @torch.inference_mode()
     def _get_model_logits(self: Hyformer, input_ids: torch.LongTensor) -> torch.FloatTensor:  # type: ignore[misc]
         logits = self.forward(input_ids=input_ids, attention_mask=None, task="lm", use_cache=False)["logits"]
-        return logits[:, [-1]]
+        return logits
 
     @torch.inference_mode()
     def _get_model_predictions(  # type: ignore[misc]

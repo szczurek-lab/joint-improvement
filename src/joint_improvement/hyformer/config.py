@@ -42,6 +42,7 @@ class HyformerConfig(BaseConfig):
     resid_dropout: float = 0.0
     eps: float = 1e-6
     num_prediction_tasks: int | None = None
+    generator_type: str = "unconditional"
 
     def __post_init__(self) -> None:
         """Validate configuration parameters."""
@@ -59,3 +60,7 @@ class HyformerConfig(BaseConfig):
             raise ValueError(f"max_seq_len must be positive, got {self.max_seq_len}")
         if self.num_prediction_tasks is not None and self.num_prediction_tasks <= 0:
             raise ValueError(f"num_prediction_tasks must be positive when set, got {self.num_prediction_tasks}")
+        if self.generator_type not in ("unconditional", "tasar", "tasar_legacy"):
+            raise ValueError(
+                f"generator_type must be one of 'unconditional', 'tasar', 'tasar_legacy', got {self.generator_type}"
+            )

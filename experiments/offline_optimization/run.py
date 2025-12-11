@@ -1,396 +1,219 @@
+"""Offline optimization script for Joint Self-Improvement."""
+
 from __future__ import annotations
 
 import argparse
-import csv
-import json
-import logging
+import sys
+import warnings
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
 
-if TYPE_CHECKING:
-    from collections.abc import Iterable, Sequence
+import torch
 
-if __package__ is None or __package__ == "":
-    import sys
-
-    _PROJECT_ROOT = Path(__file__).resolve().parents[2]
-    if str(_PROJECT_ROOT) not in sys.path:
-        sys.path.insert(0, str(_PROJECT_ROOT))
-    _SRC_ROOT = _PROJECT_ROOT / "src"
-    if _SRC_ROOT.exists() and str(_SRC_ROOT) not in sys.path:
-        sys.path.insert(0, str(_SRC_ROOT))
-
-# TODO: HFBackboneConfig and load_hf_backbone are not implemented in hyformer module
-# from joint_improvement.hyformer import HFBackboneConfig, load_hf_backbone
-from joint_improvement.utils.dataset_io import load_npz_dataset
-
-from experiments.offline_optimization.conditional_sampling import (
-    ConditionalSamplingConfig,
-    run_conditional_sampling,
-)
-from experiments.offline_optimization.self_improvement import (
-    SelfImprovementConfig,
-    run_self_improvement,
+# Suppress dynamo warnings about non-relation expressions
+# These warnings occur when PyTorch's compiler encounters complex symbolic shape
+# expressions (e.g., OR conditions) that it cannot fully optimize. They are harmless
+# and don't affect training correctness, but can clutter the output.
+warnings.filterwarnings(
+    "ignore",
+    message=".*_maybe_guard_rel.*was called on non-relation expression.*",
+    category=UserWarning,
 )
 
-LOGGER = logging.getLogger("offline_optimization")
+# Ensure experiments package is importable
+if (project_root := Path(__file__).parent.parent.parent) not in [Path(p) for p in sys.path]:
+    sys.path.insert(0, str(project_root))
+
+from experiments.helpers import create_dataloader, load_dataset, load_model, load_tokenizer, load_trainer  # noqa: E402
+from joint_improvement.hyformer.model import Hyformer  # noqa: E402
+from joint_improvement.tokenizers.smiles import SMILESTokenizer  # noqa: E402
+from joint_improvement.utils import SequenceDataLoader, SequenceDataset, set_seed  # noqa: E402
+from joint_improvement.utils.chemistry.docking import (  # noqa: E402
+    TARGET_DOCKING_THRESHOLDS,
+    calculate_docking_batch,
+)
+from joint_improvement.utils.chemistry.qed import calculate_qed_batch  # noqa: E402
+from joint_improvement.utils.chemistry.sa import calculate_sa_batch  # noqa: E402
+from joint_improvement.utils.metrics.docking.hit_ratio import calculate_hit_ratio  # noqa: E402
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build command-line argument parser.
+
+    Returns
+    -------
+    argparse.ArgumentParser
+        Configured argument parser.
+    """
     parser = argparse.ArgumentParser(
-        description=("Offline molecular optimisation pipeline with conditional sampling and self-improvement."),
-    )
-    parser.add_argument(
-        "--data-path",
-        type=Path,
-        required=True,
-        help="NPZ file containing 'sequences' and optional 'scores'.",
-    )
-    parser.add_argument(
-        "--oracle-path",
-        type=Path,
-        help=("Optional NPZ file used only for scoring generated samples (defaults to --data-path)."),
+        description="Train Hyformer model in multi-task setting.",
     )
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path("results/offline_optimization"),
-        help="Base directory for experiment outputs.",
+        required=True,
+        help="Directory to save checkpoints and logs.",
     )
     parser.add_argument(
-        "--experiment-name",
+        "--train-dataset-config",
+        type=Path,
+        required=True,
+        help="Path to SequenceDatasetConfig JSON file for training data.",
+    )
+    parser.add_argument(
+        "--val-dataset-config",
+        type=Path,
+        required=True,
+        help="Path to SequenceDatasetConfig JSON file for validation data.",
+    )
+    parser.add_argument(
+        "--tokenizer-config",
+        type=Path,
+        required=True,
+        help="Path to tokenizer directory containing tokenizer_config.json and vocab file.",
+    )
+    parser.add_argument(
+        "--model-config",
+        type=Path,
+        required=True,
+        help="Path to HyformerConfig JSON file.",
+    )
+    parser.add_argument(
+        "--model-ckpt",
+        type=Path,
+        required=True,
+        help="Path to model checkpoint to load.",
+    )
+    parser.add_argument(
+        "--trainer-config",
+        type=Path,
+        required=True,
+        help="Path to TrainerConfig JSON file. If not provided, uses default values.",
+    )
+    parser.add_argument(
+        "--device",
         type=str,
-        help="Overrides the default experiment folder name.",
+        default="cuda" if torch.cuda.is_available() else "cpu",
+        help="Device to train on (default: cuda if available, else cpu).",
     )
     parser.add_argument(
-        "--stage",
-        choices=["all", "conditional_sampling", "self_improvement"],
-        default="all",
-        help="Select which stage(s) to execute.",
-    )
-
-    parser.add_argument(
-        "--seeds",
-        type=int,
-        nargs="+",
-        help="Explicit list of seeds to run.",
-    )
-    parser.add_argument(
-        "--num-seeds",
-        type=int,
-        default=1,
-        help="Number of seeds to generate when --seeds is not provided.",
-    )
-    parser.add_argument(
-        "--seed-offset",
+        "--seed",
         type=int,
         default=0,
-        help="Offsets auto-generated seeds.",
+        help="Random seed for reproducibility (default: 0).",
     )
     parser.add_argument(
-        "--seed-index",
-        type=int,
-        help=("When launching via SBATCH arrays, provide the SLURM_ARRAY_TASK_ID and only that seed will run."),
-    )
-
-    # Backbone configuration
-    parser.add_argument(
-        "--backbone-model-id",
+        "--target",
         type=str,
-        default="mlp-classifier",
-    )
-    parser.add_argument("--backbone-task", type=str, default="causal-lm")
-    parser.add_argument("--backbone-tokenizer-id", type=str)
-    parser.add_argument("--backbone-revision", type=str)
-    parser.add_argument("--backbone-cache-dir", type=str)
-    parser.add_argument("--backbone-auth-token", type=str)
-    parser.add_argument("--trust-remote-code", action="store_true")
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Skip backbone loading and emit deterministic placeholders.",
-    )
-
-    # Conditional sampling options
-    parser.add_argument("--conditional-num-prompts", type=int, default=8)
-    parser.add_argument("--conditional-samples-per-prompt", type=int, default=4)
-    parser.add_argument(
-        "--conditional-threshold",
-        type=float,
-        help="Keep molecules whose score exceeds this threshold.",
+        required=True,
+        help="Target to optimize for.",
     )
     parser.add_argument(
-        "--conditional-top-k",
+        "--num-workers",
         type=int,
-        help="Restrict conditioning pool to top-k ranked by dataset scores.",
+        default=4,
+        help="Number of workers to use for data loading (default: 4).",
     )
     parser.add_argument(
-        "--prompt-template",
-        type=str,
-        default=("Given the molecule {sequence} with property score {score}, propose an improved molecule:"),
+        "--batch-size",
+        type=int,
+        default=8,
+        help="Batch size for optimization (default: 8).",
     )
-    parser.add_argument("--max-new-tokens", type=int, default=64)
-    parser.add_argument("--temperature", type=float, default=0.8)
-    parser.add_argument("--top-p", type=float, default=0.95)
-    parser.add_argument("--repetition-penalty", type=float, default=1.0)
-    parser.add_argument("--device", type=str, default="cpu")
-
-    # Self-improvement options
-    parser.add_argument("--self-top-k", type=int, default=32)
     parser.add_argument(
-        "--self-min-score",
-        type=float,
-        help="Discard generated molecules below this score.",
+        "--max-length",
+        type=int,
+        default=512,
+        help="Maximum sequence length for optimization (default: 512).",
     )
-
+    parser.add_argument(
+        "--number_of_optimization_rounds",
+        type=int,
+        default=10,
+        help="Number of optimization rounds (default: 10).",
+    )
+    parser.add_argument(
+        "--number_of_optimization_steps",
+        type=int,
+        default=10,
+        help="Number of optimization steps per round (default: 10).",
+    )
     return parser
 
 
-# ---------------------------------------------------------------------------
-# Main execution
-# ---------------------------------------------------------------------------
+def optimization_round(
+    model: Hyformer,
+    offline_dataset: SequenceDataset,
+    test_dataset: SequenceDataset,
+    tokenizer: SMILESTokenizer,
+    args: argparse.Namespace,
+) -> None:
+    return None
 
 
-def main(argv: Sequence[str] | None = None) -> None:
-    parser = build_parser()
-    args = parser.parse_args(argv)
+def reward_function(generated_molecules: list[str], target: str, device: str = "cpu") -> float:
+    """Compute hit ratio-based reward for generated molecules."""
+    docking_scores = calculate_docking_batch(generated_molecules, target=target, device=device)
+    qed_scores = calculate_qed_batch(generated_molecules)
+    sa_scores = calculate_sa_batch(generated_molecules)
+    docking_threshold = TARGET_DOCKING_THRESHOLDS.get(target, -9.0)
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+    return calculate_hit_ratio(
+        docking_scores=docking_scores,
+        qed_scores=qed_scores,
+        sa_scores=sa_scores,
+        docking_threshold=docking_threshold,
+        qed_threshold=0.5,
+        sa_threshold=5.0,
     )
 
-    dataset = load_npz_dataset(args.data_path)
-    oracle_dataset = load_npz_dataset(args.oracle_path) if args.oracle_path else dataset
 
-    seeds = resolve_seeds(args)
-    default_name = args.experiment_name or args.data_path.stem
-    experiment_dir = prepare_experiment_dir(args.output_dir, default_name)
+def main() -> None:
+    """Main offline optimization function.
 
-    backbone_bundle = None
-    if args.stage in ("all", "conditional_sampling") and not args.dry_run:
-        backbone_bundle = load_backbone_from_args(args)
+    1. Load offline dataset
+    2. Jointly fine-tune model on offline dataset
+    3. Evaluate the model on test dataset and generation metrics
+    4. Reason and Self-Improve the generated molecules
+    5. Augment the offline dataset with the generated molecules
+    6. Repeat
+    """
+    parser = build_parser()
+    args = parser.parse_args()
 
-    experiment_summary: list[dict[str, Any]] = []
-    all_conditional_rows: list[dict[str, Any]] = []
+    set_seed(args.seed, deterministic=True)
+    args.output_dir.mkdir(parents=True, exist_ok=True)
 
-    for seed in seeds:
-        LOGGER.info("==== Seed %s ====", seed)
-        seed_dir = experiment_dir / f"seed_{seed:04d}"
-        conditional_dir = seed_dir / "conditional_sampling"
-        self_dir = seed_dir / "self_improvement"
+    train_dataset = load_dataset(args.train_dataset_config)
+    val_dataset = load_dataset(args.val_dataset_config)
 
-        conditional_rows: list[dict[str, Any]] | None = None
-        conditional_summary: dict[str, Any] | None = None
-        self_summary: dict[str, Any] | None = None
+    tokenizer = load_tokenizer(args.tokenizer_config, config_dump_dir=args.output_dir)
+    model = load_model(args.model_config, args.model_ckpt, args.device, config_dump_dir=args.output_dir)
+    trainer = load_trainer(args.trainer_config, model, args.device, args.output_dir, config_dump_dir=args.output_dir)
 
-        if args.stage in ("all", "conditional_sampling"):
-            if backbone_bundle is None and not args.dry_run:
-                raise RuntimeError(
-                    "Backbone failed to load but conditional sampling was requested.",
-                )
-            cond_cfg = ConditionalSamplingConfig(
-                seed=seed,
-                sequences=dataset.sequences,
-                scores=dataset.scores,
-                backbone=backbone_bundle,
-                output_csv=conditional_dir / "candidates.csv",
-                output_json=conditional_dir / "summary.json",
-                prompt_template=args.prompt_template,
-                num_prompts=args.conditional_num_prompts,
-                samples_per_prompt=args.conditional_samples_per_prompt,
-                property_threshold=args.conditional_threshold,
-                top_k=args.conditional_top_k,
-                max_new_tokens=args.max_new_tokens,
-                temperature=args.temperature,
-                top_p=args.top_p,
-                repetition_penalty=args.repetition_penalty,
-                device=args.device,
-                dry_run=args.dry_run,
-                model_id=args.backbone_model_id,
-                score_lookup=oracle_dataset.score_lookup,
-                extra_metadata={"data_path": str(args.data_path)},
-            )
-            cond_result = run_conditional_sampling(cond_cfg)
-            conditional_rows = cond_result.rows
-            conditional_summary = read_json(cond_result.json_path)
-            all_conditional_rows.extend(conditional_rows)
-        else:
-            conditional_csv = conditional_dir / "candidates.csv"
-            conditional_rows = load_rows_from_csv(conditional_csv)
-            if conditional_rows:
-                conditional_summary_path = conditional_dir / "summary.json"
-                conditional_summary = read_json(conditional_summary_path)
+    train_loaders: dict[str, SequenceDataLoader] = {}
+    val_loaders: dict[str, SequenceDataLoader] = {}
 
-        if args.stage in ("all", "self_improvement"):
-            if not conditional_rows:
-                LOGGER.warning(
-                    "No conditional candidates for seed %s; skipping self-improvement.",
-                    seed,
-                )
-            else:
-                self_cfg = SelfImprovementConfig(
-                    seed=seed,
-                    top_k=args.self_top_k,
-                    output_csv=self_dir / "top_candidates.csv",
-                    output_json=self_dir / "summary.json",
-                    augmented_npz=self_dir / "augmented_dataset.npz",
-                    min_score=args.self_min_score,
-                    extra_metadata={"data_path": str(args.data_path)},
-                )
-                self_result = run_self_improvement(self_cfg, conditional_rows)
-                self_summary = read_json(self_result.json_path)
-
-        experiment_summary.append(
-            {
-                "seed": seed,
-                "conditional_sampling": conditional_summary,
-                "self_improvement": self_summary,
-            }
+    for task_name in trainer.config.tasks.keys():
+        train_loaders[task_name] = create_dataloader(
+            dataset=train_dataset,
+            tokenizer=tokenizer,
+            task_name=task_name,
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            device=args.device,
+            shuffle=True,
+        )
+        val_loaders[task_name] = create_dataloader(
+            dataset=val_dataset,
+            tokenizer=tokenizer,
+            task_name=task_name,
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            device=args.device,
+            shuffle=False,
         )
 
-    write_master_summary(experiment_dir, args, experiment_summary)
-
-    if all_conditional_rows:
-        aggregate_path = experiment_dir / "conditional_candidates.csv"
-        write_rows_to_csv(aggregate_path, all_conditional_rows)
-        LOGGER.info("Wrote aggregated conditional candidates to %s", aggregate_path)
-
-
-# ---------------------------------------------------------------------------
-# Utilities
-# ---------------------------------------------------------------------------
-
-
-def load_backbone_from_args(args: argparse.Namespace):
-    # TODO: Implement HFBackboneConfig and load_hf_backbone in hyformer module
-    # For now, this function is not implemented
-    raise NotImplementedError(
-        "HFBackboneConfig and load_hf_backbone are not yet implemented. "
-        "Use Hyformer and HyformerConfig directly instead."
-    )
-    # config = HFBackboneConfig(
-    #     model_id=args.backbone_model_id,
-    #     task=args.backbone_task,
-    #     tokenizer_id=args.backbone_tokenizer_id,
-    #     revision=args.backbone_revision,
-    #     cache_dir=args.backbone_cache_dir,
-    #     trust_remote_code=args.trust_remote_code,
-    #     use_auth_token=args.backbone_auth_token,
-    # )
-    # bundle = load_hf_backbone(config)
-    # LOGGER.info("Loaded backbone %s", args.backbone_model_id)
-    # return bundle
-
-
-def resolve_seeds(args: argparse.Namespace) -> list[int]:
-    if args.seeds:
-        seeds = list(dict.fromkeys(args.seeds))
-    else:
-        seeds = [args.seed_offset + idx for idx in range(args.num_seeds)]
-    if args.seed_index is not None:
-        if args.seed_index < 0 or args.seed_index >= len(seeds):
-            raise ValueError(
-                f"seed_index {args.seed_index} is invalid for {len(seeds)} seeds.",
-            )
-        seeds = [seeds[args.seed_index]]
-    return seeds
-
-
-def prepare_experiment_dir(output_dir: Path, experiment_name: str | None) -> Path:
-    if experiment_name:
-        exp_dir = output_dir / experiment_name
-    else:
-        exp_dir = output_dir / "default"
-    exp_dir.mkdir(parents=True, exist_ok=True)
-    return exp_dir
-
-
-def load_rows_from_csv(path: Path) -> list[dict[str, Any]]:
-    if not path.exists():
-        LOGGER.warning("Conditional sampling file not found: %s", path)
-        return []
-    rows: list[dict[str, Any]] = []
-    with path.open("r", encoding="utf-8") as handle:
-        data = csv.DictReader(handle)
-        for raw_row in data:
-            row = dict(raw_row)
-            for key in ("seed", "prompt_index", "sample_index"):
-                if key in row and row[key] != "":
-                    row[key] = int(row[key])
-            for key in ("conditioning_score", "score"):
-                if key in row:
-                    row[key] = _safe_float(row[key])
-            rows.append(row)
-    return rows
-
-
-def _safe_float(value: Any) -> float | None:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def read_json(path: Path) -> dict[str, Any] | None:
-    if not path.exists():
-        return None
-    with path.open("r", encoding="utf-8") as handle:
-        return json.load(handle)
-
-
-def write_master_summary(
-    experiment_dir: Path,
-    args: argparse.Namespace,
-    per_seed: list[dict[str, Any]],
-) -> None:
-    summary_path = experiment_dir / "summary.json"
-    payload = {
-        "data_path": str(args.data_path),
-        "oracle_path": str(args.oracle_path) if args.oracle_path else None,
-        "stage": args.stage,
-        "seeds": [entry["seed"] for entry in per_seed],
-        "backbone_model_id": args.backbone_model_id,
-        "conditional": {
-            "num_prompts": args.conditional_num_prompts,
-            "samples_per_prompt": args.conditional_samples_per_prompt,
-            "threshold": args.conditional_threshold,
-            "top_k": args.conditional_top_k,
-        },
-        "self_improvement": {
-            "top_k": args.self_top_k,
-            "min_score": args.self_min_score,
-        },
-        "seeds_summary": per_seed,
-    }
-    with summary_path.open("w", encoding="utf-8") as handle:
-        json.dump(payload, handle, indent=2)
-    LOGGER.info("Wrote experiment summary to %s", summary_path)
-
-
-def write_rows_to_csv(path: Path, rows: Iterable[dict[str, Any]]) -> None:
-    fieldnames = [
-        "seed",
-        "model_id",
-        "prompt_index",
-        "sample_index",
-        "conditioning_sequence",
-        "conditioning_score",
-        "prompt",
-        "generated_sequence",
-        "score",
-    ]
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
-        writer.writeheader()
-        for row in rows:
-            csv_row = dict(row)
-            if csv_row.get("conditioning_score") is None:
-                csv_row["conditioning_score"] = ""
-            if csv_row.get("score") is None:
-                csv_row["score"] = ""
-            writer.writerow(csv_row)
+    trainer.train(train_loaders=train_loaders, val_loaders=val_loaders)
 
 
 if __name__ == "__main__":

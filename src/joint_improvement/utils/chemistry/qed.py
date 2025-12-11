@@ -1,24 +1,25 @@
-"""Validity check utilities for molecular properties."""
+"""QED (Quantitative Estimate of Drug-likeness) calculation utility."""
 
 import numpy as np
 from numpy.typing import NDArray
 
 try:
     from rdkit import Chem, RDLogger
+    from rdkit.Chem import Descriptors
 
     # Suppress RDKit warnings
     RDLogger.DisableLog("rdApp.*")  # type: ignore[attr-defined]
 
     _RDKIT_AVAILABLE = True
 except ImportError:
-    Chem = None
-    RDLogger = None
     _RDKIT_AVAILABLE = False
+    Chem = None
+    Descriptors = None
+    RDLogger = None
 
 
-def calculate_validity(smiles: str) -> bool:
-    """
-    Check if a SMILES string corresponds to a valid molecule.
+def calculate_qed(smiles: str) -> float:
+    """Calculate the QED (quantitative estimate of drug-likeness) of a molecule.
 
     Parameters
     ----------
@@ -27,8 +28,9 @@ def calculate_validity(smiles: str) -> bool:
 
     Returns
     -------
-    bool
-        True if the SMILES string corresponds to a valid, non-empty molecule.
+    float
+        QED score in the range [0, 1]. Returns NaN if the molecule cannot
+        be parsed or if an error occurs during calculation.
 
     Raises
     ------
@@ -37,27 +39,29 @@ def calculate_validity(smiles: str) -> bool:
 
     Notes
     -----
-    This function uses RDKit's MolFromSmiles method to parse the SMILES string.
-    It checks if the molecule is valid (non-empty) and has at least one atom.
-
     RDKit is an optional dependency. Install it with:
     ``pip install rdkit`` or ``conda install -c conda-forge rdkit``
     """
     if not _RDKIT_AVAILABLE:
         raise ImportError(
-            "RDKit is required for validity check. "
+            "RDKit is required for QED calculation. "
             "Install it with: pip install rdkit "
             "or conda install -c conda-forge rdkit"
         )
+
     try:
         mol = Chem.MolFromSmiles(smiles)
-        return smiles != "" and mol is not None and mol.GetNumAtoms() > 0
-    except:  # noqa: E722
-        return False
+        if mol is None:
+            return float("nan")
+
+        mol.UpdatePropertyCache(strict=False)
+        return float(Descriptors.qed(mol))  # type: ignore[attr-defined]
+    except Exception:
+        return float("nan")
 
 
-def calculate_validity_batch(smiles_list: list[str] | NDArray[np.str_]) -> NDArray[np.bool_]:
-    """Check validity for a batch of SMILES strings.
+def calculate_qed_batch(smiles_list: list[str] | NDArray[np.str_]) -> NDArray[np.float64]:
+    """Calculate QED (quantitative estimate of drug-likeness) for a batch of molecules.
 
     Parameters
     ----------
@@ -66,9 +70,9 @@ def calculate_validity_batch(smiles_list: list[str] | NDArray[np.str_]) -> NDArr
 
     Returns
     -------
-    np.ndarray[bool]
-        Array of boolean values indicating validity. True if the SMILES string
-        corresponds to a valid, non-empty molecule, False otherwise.
+    np.ndarray[float]
+        Array of QED scores in the range [0, 1]. Returns NaN for molecules that
+        cannot be parsed or if an error occurs during calculation.
 
     Raises
     ------
@@ -78,17 +82,17 @@ def calculate_validity_batch(smiles_list: list[str] | NDArray[np.str_]) -> NDArr
     Notes
     -----
     This function uses numpy.vectorize to efficiently process multiple molecules.
-    It is more efficient than calling calculate_validity multiple times in a loop.
+    It is more efficient than calling calculate_qed multiple times in a loop.
 
     RDKit is an optional dependency. Install it with:
     ``pip install rdkit`` or ``conda install -c conda-forge rdkit``
     """
     if not _RDKIT_AVAILABLE:
         raise ImportError(
-            "RDKit is required for validity check. "
+            "RDKit is required for QED calculation. "
             "Install it with: pip install rdkit "
             "or conda install -c conda-forge rdkit"
         )
 
-    vectorized_validity = np.vectorize(calculate_validity, otypes=[bool])
-    return vectorized_validity(smiles_list)
+    vectorized_qed = np.vectorize(calculate_qed, otypes=[float])
+    return vectorized_qed(smiles_list)
