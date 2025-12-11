@@ -7,6 +7,8 @@ Key Principles:
 - Follow best practices for machine learning in scientific applications.
 - Implement efficient data processing pipelines for chemical data.
 - Ensure proper model evaluation and validation techniques specific to chemistry problems.
+- Ensure single source of truth
+- Every line of code is a liability, make sure that each line that you add is justified in terms of end-user functionality
 
 Machine Learning Framework Usage:
 

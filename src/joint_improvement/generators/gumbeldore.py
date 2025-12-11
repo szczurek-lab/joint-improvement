@@ -16,22 +16,24 @@ from typing import TYPE_CHECKING, Any, TypeAlias
 
 import torch
 
-from .base import BaseSearchMixin
-from .utils.incremental_sbs import IncrementalSBS
+from .generator import GeneratorMixin
+from .utils.gumbeldore.incremental_sbs import IncrementalSBS
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     import numpy as np
 
-    from .utils.stochastic_beam_search import BeamLeaf, State
+    from joint_improvement.hyformer.model import Hyformer
+
+    from .utils.gumbeldore.stochastic_beam_search import BeamLeaf, State
 
 _LOGGER = logging.getLogger(__name__)
 StateList: TypeAlias = list[torch.Tensor]
 StateTensor: TypeAlias = torch.Tensor
 
 
-class GumbeldoreMixin(BaseSearchMixin):
+class GumbeldoreMixin(GeneratorMixin):
     """Gumbeldore sampling-based generation."""
 
     def _cast_to_tensor(self, states: StateList) -> torch.Tensor:
@@ -50,7 +52,7 @@ class GumbeldoreMixin(BaseSearchMixin):
         if temperature != 1.0:
             logits = self._scale_logits(logits, temperature=temperature)
         if top_k is not None:
-            logits = self._crop_logits(logits, top_k=top_k)
+            logits = self._apply_top_k(logits, top_k=top_k)
         log_probs = self._compute_log_probs(logits)
         output_states: StateList = self._cast_to_states(log_probs.cpu().numpy())
         return output_states
@@ -78,7 +80,7 @@ class GumbeldoreMixin(BaseSearchMixin):
         oracle_fn: Callable[[torch.LongTensor], float] | None = None,
     ) -> float:
         objective_fn_evaluation = (
-            self._get_model_predictions(input_ids=input_ids) if oracle_fn is None else oracle_fn(input_ids)
+            self._get_model_predictions(input_ids=input_ids) if oracle_fn is None else oracle_fn(input_ids)  # type: ignore[attr-defined]
         )
         return advantage_fn(float(objective_fn_evaluation))
 
@@ -120,7 +122,8 @@ class GumbeldoreMixin(BaseSearchMixin):
         Parameters
         ----------
         prefix_input_ids : torch.LongTensor
-            Input token IDs tensor representing the initial sequence/prompt of shape (sequence_length, ) for a single sequence.
+            Input token IDs tensor representing the initial sequence/prompt of shape
+            (sequence_length, ) for a single sequence.
         max_sequence_length : int
             Maximum sequence length of the generated sequence.
         advantage_fn : Callable[[float], float]
@@ -205,43 +208,45 @@ class GumbeldoreMixin(BaseSearchMixin):
         raise NotImplementedError("Subclass must implement this method.")
 
 
-class GumbeldoreMixinV1(GumbeldoreMixin):
-    """Gumbeldore sampling-based generation for V1 models."""
+class GumbeldoreMixinV1(GumbeldoreMixin):  # type: ignore[misc]
+    """Gumbeldore sampling-based generation for V1 models (legacy)."""
 
     @torch.inference_mode()
-    def _get_model_logits(self, input_ids: torch.LongTensor) -> torch.FloatTensor:
+    def _get_model_logits(self: Hyformer, input_ids: torch.LongTensor) -> torch.FloatTensor:  # type: ignore[misc]
         """Return logits for the next token of shape (batch_size, 1, vocab_size)."""
-        return self.forward(input_ids=input_ids, attention_mask=None, next_token_only=True, task="generation")[
-            "logits_generation"
-        ]
+        output = self.forward(input_ids=input_ids, attention_mask=None, task="lm", use_cache=False)
+        logits = output["logits"]
+        return logits[:, [-1]]
 
     @torch.inference_mode()
-    def _get_model_predictions(self, input_ids: torch.LongTensor) -> float:
+    def _get_model_predictions(self: Hyformer, input_ids: torch.LongTensor) -> float:  # type: ignore[misc]
         """Return predictions for the downstream task, e.g., of shape (batch_size, num_tasks) for regression."""
         input_ids = input_ids.unsqueeze(0)  # equivalent to batch size == 1
         attention_mask = torch.ones_like(input_ids, dtype=torch.bool)
-        return self.predict(input_ids=input_ids, attention_mask=attention_mask).item()
+        return self.predict(input_ids=input_ids, attention_mask=attention_mask).item()  # type: ignore[attr-defined]
 
 
-class GumbeldoreMixinV2(GumbeldoreMixin):
-    """Gumbeldore sampling-based generation for V2 models."""
-
-    @torch.inference_mode()
-    def _get_model_logits(self, input_ids: torch.LongTensor) -> torch.FloatTensor:
-        return self.forward(input_ids=input_ids, attention_mask=None, next_token_only=True, task="lm", use_cache=False)[
-            "logits"
-        ]
+class GumbeldoreMixinV2(GumbeldoreMixin):  # type: ignore[misc]
+    """Gumbeldore sampling-based generation for V2 models (legacy)."""
 
     @torch.inference_mode()
-    def _get_model_predictions(
-        self, input_ids: torch.LongTensor, attention_mask: torch.Tensor | None = None, **kwargs: Any
+    def _get_model_logits(self: Hyformer, input_ids: torch.LongTensor) -> torch.FloatTensor:  # type: ignore[misc]
+        logits = self.forward(input_ids=input_ids, attention_mask=None, task="lm", use_cache=False)["logits"]
+        return logits[:, [-1]]
+
+    @torch.inference_mode()
+    def _get_model_predictions(  # type: ignore[misc]
+        self: Hyformer,
+        input_ids: torch.LongTensor,
+        attention_mask: torch.Tensor | None = None,
+        **kwargs: Any,
     ) -> torch.Tensor:
         _logits_prediction = self.forward(
             input_ids=input_ids, attention_mask=attention_mask, task="prediction", **kwargs
         )["logits"]
-        if self.prediction_task_type == "classification":
+        if self.prediction_task_type == "classification":  # type: ignore[attr-defined]
             return torch.sigmoid(_logits_prediction)
-        elif self.prediction_task_type == "regression":
+        elif self.prediction_task_type == "regression":  # type: ignore[attr-defined]
             return _logits_prediction
         else:
             raise ValueError("Variable `prediction_task_type` must be either `classification` or `regression`.")

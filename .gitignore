@@ -221,3 +221,15 @@ __marimo__/
 # Keep configs/*.yaml and environment.yml
 *.yaml.local
 *.yml.local
+
+# Results
+results/
+configs/legacy/
+
+# Data
+data/
+
+# test files
+test.ipynb
+test_*.ipynb
+tmp/

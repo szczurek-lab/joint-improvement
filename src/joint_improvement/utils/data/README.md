@@ -8,29 +8,27 @@ This module provides utilities for loading and processing data in NPZ (NumPy arc
 ```python
 from joint_improvement.utils import SequenceDataset, SequenceDatasetConfig
 
+# Load config from JSON (seed is encoded in the config path and data_path)
+config = SequenceDatasetConfig.from_pretrained("configs/datasets/zinc250k/logp/seed_0/dataset_config.json")
+
+# Create datasets for different splits (seed is already in the config)
+train_dataset = SequenceDataset.from_config(config, split="train")  # Uses seed_0/train.npz
+val_dataset = SequenceDataset.from_config(config, split="val")    # Uses seed_0/val.npz
+test_dataset = SequenceDataset.from_config(config, split="test")   # Uses seed_0/test.npz
+
+# With custom root directory
+val_dataset = SequenceDataset.from_config(config, split="val", root="/data")  # /data/seed_0/val.npz
+
+# Alternatively, create config programmatically
 config = SequenceDatasetConfig(
-    data_path="seed_{seed}/{split}.npz",  # Any path template with {seed} and/or {split} placeholders
+    data_path="data/seed_0/{split}.npz",  # Seed encoded in path, {split} placeholder for split name
     sequence_key="sequences",
     target_key="targets"
 )
-
-# Placeholders are replaced automatically when parameters are provided
-train_dataset = SequenceDataset.from_config(config, split="train", seed=42)  # seed_42/train.npz
-val_dataset = SequenceDataset.from_config(config, split="val", seed=42, root="/data")  # /data/seed_42/val.npz
-
-# Alternatively, no placeholders
-config = SequenceDatasetConfig(
-    data_path="data/train.npz",  # Direct path without placeholders
-    sequence_key="sequences",
-    target_key="targets"
-)
-dataset = SequenceDataset.from_config(config)  # Loads data/train.npz
+train_dataset = SequenceDataset.from_config(config, split="train")  # data/seed_0/train.npz
 ```
 
-Placeholders can appear anywhere in the path. Examples:
-- `"seed_{seed}/{split}.npz"` → `seed_42/train.npz`
-- `"data/{seed}/splits/{split}.npz"` → `data/42/splits/train.npz`
-- `"experiment_{seed}_{split}.npz"` → `experiment_42_train.npz`
+The `{split}` placeholder is replaced with the split name (train/val/test). The seed should be encoded directly in the data_path (e.g., `seed_0`, `seed_1`, etc.).
 
 ## NPZ File Format
 

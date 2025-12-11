@@ -22,7 +22,9 @@ from typing import Optional
 
 import numpy as np
 
-from . import stochastic_beam_search as sbs
+# Import the module so `BeamLeaf` and `State` are available via `sbs`.
+import joint_improvement.generators.utils.gumbeldore.stochastic_beam_search as sbs
+from joint_improvement.generators.utils.gumbeldore.stochastic_beam_search import BeamLeaf, State
 
 sys.setrecursionlimit(10000)  # Policy updates are performed recursively right now. Could be improved in the future.
 
