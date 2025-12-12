@@ -227,7 +227,9 @@ results/
 configs/legacy/
 
 # Data
-data/
+data/*
+!data/vocabularies/
+!data/vocabularies/zinc250k.txt
 
 # test files
 test.ipynb
