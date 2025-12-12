@@ -113,25 +113,27 @@ class TasarMixin(GeneratorMixin):
         max_sequence_length: int = 128,
         deterministic: bool = False,
         replan_steps: int = 10,
+        filter_fn: Callable[[list[str]], list[str]] | None = None,
     ) -> torch.FloatTensor:
         """Generate multiple sequences using Tasar."""
         generated_sequences: list[torch.LongTensor] = []
         while len(generated_sequences) < num_samples:
-            generated_sequences.extend(
-                self.generate(
-                    prefix_input_ids=prefix_input_ids,
-                    advantage_fn=advantage_fn,
-                    eos_token_id=eos_token_id,
-                    oracle_fn=oracle_fn,
-                    temperature=temperature,
-                    top_k=top_k,
-                    beam_width=beam_width,
-                    nucleus_top_p=nucleus_top_p,
-                    max_sequence_length=max_sequence_length,
-                    deterministic=deterministic,
-                    replan_steps=replan_steps,
-                )
+            new_sequences = self.generate(
+                prefix_input_ids=prefix_input_ids,
+                advantage_fn=advantage_fn,
+                eos_token_id=eos_token_id,
+                oracle_fn=oracle_fn,
+                temperature=temperature,
+                top_k=top_k,
+                beam_width=beam_width,
+                nucleus_top_p=nucleus_top_p,
+                max_sequence_length=max_sequence_length,
+                deterministic=deterministic,
+                replan_steps=replan_steps,
             )
+            if filter_fn is not None:
+                new_sequences = filter_fn(new_sequences)
+            generated_sequences.extend(new_sequences)
         return generated_sequences[:num_samples]
 
     def generate(

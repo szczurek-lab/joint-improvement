@@ -204,8 +204,10 @@ class GumbeldoreMixin(GeneratorMixin):
         output_result = result[0]
         return [leaf.state for leaf in output_result]
 
-    def _get_model_logits(self, input_ids: torch.LongTensor) -> torch.FloatTensor:
-        raise NotImplementedError("Subclass must implement this method.")
+    @torch.inference_mode()
+    def _get_model_logits(self: Hyformer, input_ids: torch.LongTensor) -> torch.FloatTensor:  # type: ignore[misc]
+        logits = self.forward(input_ids=input_ids, task="lm")["logits"]  # type: ignore[attr-defined]
+        return logits[:, [-1]]  # next token logits
 
 
 class GumbeldoreMixinV1(GumbeldoreMixin):  # type: ignore[misc]

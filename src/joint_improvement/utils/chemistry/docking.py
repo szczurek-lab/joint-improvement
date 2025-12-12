@@ -111,7 +111,7 @@ def calculate_docking(smiles: str, target: str = "fa7", device: str = "cpu") -> 
             _docking_targets[instance_key] = target
 
         scores = _docking_instances[instance_key].predict([smiles])
-        if not scores:
+        if scores is None or len(scores) == 0:
             return float("nan")
 
         return float(scores[0])
