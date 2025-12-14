@@ -5,7 +5,6 @@ from __future__ import annotations
 import torch
 from torch import nn
 
-from joint_improvement.hyformer.losses import compute_prediction_loss
 from joint_improvement.hyformer.model import Hyformer
 
 
@@ -15,7 +14,6 @@ class PredictionHead(nn.Module):
 
     Wraps the base Hyformer model with a task-specific prediction head.
     Supports binary classification, multi-class classification, and regression.
-    Handles missing values in labels.
 
     Parameters
     ----------
@@ -54,12 +52,6 @@ class PredictionHead(nn.Module):
     This head uses the CLS token (first token) representation and projects
     to the number of labels.
 
-    Missing values handling:
-    - For classification: Missing values can be represented as NaN or ignore_index.
-      Only valid samples contribute to the loss.
-    - For regression: Missing values should be represented as NaN.
-      Only valid samples contribute to the loss.
-
     Examples
     --------
     >>> from ..model import Hyformer
@@ -70,15 +62,13 @@ class PredictionHead(nn.Module):
     >>> model = PredictionHead(base_model, num_labels=2, d_model=512)
     >>> input_ids = torch.randint(0, 32000, (4, 10))
     >>> attention_mask = torch.ones(4, 10)
-    >>> labels = torch.tensor([0, 1, -1, 1])  # -1 is missing
-    >>> logits, loss = model(input_ids, attention_mask=attention_mask, labels=labels, task="prediction")
+    >>> logits = model(input_ids, attention_mask=attention_mask, task="prediction")
     >>> logits.shape
     torch.Size([4, 2])
 
     >>> # For regression
     >>> model = PredictionHead(base_model, num_labels=1, d_model=512)
-    >>> labels = torch.tensor([[1.0], [2.0], [float("nan")], [3.0]])  # NaN is missing
-    >>> logits, loss = model(input_ids, attention_mask=attention_mask, labels=labels, task="prediction")
+    >>> logits = model(input_ids, attention_mask=attention_mask, task="prediction")
     >>> logits.shape
     torch.Size([4, 1])
     """
@@ -110,8 +100,7 @@ class PredictionHead(nn.Module):
         input_ids: torch.Tensor,
         task: str,
         attention_mask: torch.Tensor | None = None,
-        labels: torch.Tensor | None = None,
-    ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
+    ) -> torch.Tensor:
         """
         Forward pass for prediction task.
 
@@ -125,19 +114,11 @@ class PredictionHead(nn.Module):
         attention_mask : Optional[torch.Tensor], default=None
             Attention mask tensor of shape [B, T] where 1 indicates valid
             tokens and 0 indicates padding.
-        labels : Optional[torch.Tensor], default=None
-            Target labels of shape [B] for classification or [B, num_labels] or [B]
-            for regression. Missing values: NaN or ignore_index for classification,
-            NaN for regression. If provided, loss will be computed and returned.
 
         Returns
         -------
-        torch.Tensor | tuple[torch.Tensor, torch.Tensor]
-            If labels is None:
-                - Logits tensor of shape [B, num_labels]
-            If labels is provided:
-                - Logits tensor of shape [B, num_labels]
-                - Loss tensor (scalar)
+        torch.Tensor
+            Logits tensor of shape [B, num_labels]
 
         Notes
         -----
@@ -147,6 +128,9 @@ class PredictionHead(nn.Module):
         - Applies LayerNorm before classifier for stable training
         - Uses dropout for regularization
         """
+        if task != "prediction":
+            raise ValueError(f"PredictionHead only supports task='prediction', got {task!r}")
+
         # Prediction uses bidirectional attention
         outputs = self.base_model(
             input_ids=input_ids,
@@ -166,16 +150,4 @@ class PredictionHead(nn.Module):
         pooled = self.norm(pooled)
         pooled = self.dropout(pooled)
         logits = self.classifier(pooled)
-
-        if labels is not None:
-            # Compute prediction loss (classification or regression) with missing value support
-            loss = compute_prediction_loss(
-                logits,
-                labels,
-                num_labels=self.num_labels,
-                ignore_index=self.ignore_index,
-                reduction="mean",
-            )
-            return logits, loss
-
         return logits

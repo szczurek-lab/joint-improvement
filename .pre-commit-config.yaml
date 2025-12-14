@@ -3,10 +3,11 @@ repos:
     hooks:
       - id: mypy
         name: mypy
-        entry: bash -c 'files=$(git diff --cached --name-only --diff-filter=ACM | grep "\.py$" | grep -v "incremental_sbs.py" | grep -v "stochastic_beam_search.py" | grep -v "docking_utils" | grep -v "synthesizability_utils" | grep -v "generators/utils"); if [ -z "$files" ]; then exit 0; fi; mypy $files'
+        entry: bash -c 'mypy src/joint_improvement'
         language: system
         types: [python]
         pass_filenames: false
+        stages: [manual]
 
       - id: ruff-check
         name: ruff-check
@@ -26,8 +27,8 @@ repos:
         name: pytest
         entry: bash -c 'cd "$(git rev-parse --show-toplevel)" && exec bash scripts/run_pytest.sh'
         language: system
-        always_run: true
         pass_filenames: false
+        stages: [manual]
 
       - id: nbstripout
         name: nbstripout

@@ -93,6 +93,9 @@ class ModelInput:
         >>> model_input_gpu = model_input.to("cuda")
         >>> model_input_gpu = model_input.to(torch.device("cuda:0"))
         """
+        # Keep this method minimal: device transfer only.
+        # Contiguity/layout constraints (e.g., for torch.compile) should be handled
+        # closer to where tensors are consumed (loss/model), not at transport time.
         return ModelInput(
             input_ids=self.input_ids.to(device),
             task=self.task,
@@ -100,6 +103,37 @@ class ModelInput:
             labels=self.labels.to(device) if self.labels is not None else None,
             targets=self.targets.to(device) if self.targets is not None else None,
         )
+
+    def __reduce_ex__(self, protocol):
+        """Custom reducer for pickling that works with module reloading."""
+        return (
+            _reconstruct_modelinput,
+            (
+                self.input_ids,
+                self.task,
+                self.attention_mask,
+                self.labels,
+                self.targets,
+            ),
+        )
+
+
+def _reconstruct_modelinput(input_ids, task, attention_mask, labels, targets):
+    """Reconstruct ModelInput from pickled state.
+
+    This function is used instead of the class directly to avoid issues
+    with module reloading (e.g., autoreload in Jupyter notebooks).
+    """
+    # Import here to get the current version of the class
+    from joint_improvement.hyformer.inputs import ModelInput
+
+    return ModelInput(
+        input_ids=input_ids,
+        task=task,
+        attention_mask=attention_mask,
+        labels=labels,
+        targets=targets,
+    )
 
 
 __all__ = ["ModelInput"]

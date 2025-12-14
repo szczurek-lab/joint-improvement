@@ -112,17 +112,13 @@ class MultiTaskTrainer(TrainerCheckpointMixin):
         ) = setup_device_optimizations(config, device)
 
         if config.compile:
-            # Inductor config is already set in setup_device_optimizations
-            # Use fullgraph=False to allow fallback for parts with dynamic shapes
-            # This prevents InductorError when backward pass encounters dynamic shapes
-            # that inductor can't properly codegen. The model will still benefit from
-            # forward pass compilation while falling back to eager execution for problematic parts.
-            # Dynamic shapes are handled automatically by PyTorch's compiler.
-            self.model = torch.compile(
-                self.model,
-                mode=compile_mode,
-                fullgraph=False,  # Allow partial compilation fallback
-            )
+            # Prefer dynamic shapes to avoid stride/assert mismatches when sequence length varies
+            # across batches (e.g., padding to batch max). Fall back if the torch version
+            # doesn't support the `dynamic` kwarg.
+            try:
+                self.model = torch.compile(self.model, mode=compile_mode, dynamic=True)
+            except TypeError:
+                self.model = torch.compile(self.model, mode=compile_mode)
 
         if self.out_dir:
             self.out_dir.mkdir(parents=True, exist_ok=True)

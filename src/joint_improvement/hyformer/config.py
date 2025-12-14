@@ -31,6 +31,14 @@ class HyformerConfig(BaseConfig):
         RMSNorm epsilon value.
     num_prediction_tasks : int | None, default=None
         Number of prediction task outputs. If None, prediction head is disabled.
+    prediction_task_type : str | None, default=None
+        Explicit type of the "prediction" task to select the correct loss.
+        If None, the loss is inferred from targets dtype/shape.
+        Supported values:
+        - "multitarget_regression"
+        - "regression"
+        - "classification"
+        - "multilabel_classification"
     """
 
     vocab_size: int
@@ -42,6 +50,7 @@ class HyformerConfig(BaseConfig):
     resid_dropout: float = 0.0
     eps: float = 1e-6
     num_prediction_tasks: int | None = None
+    prediction_task_type: str | None = None
     generator_type: str = "unconditional"
 
     def __post_init__(self) -> None:
@@ -60,6 +69,17 @@ class HyformerConfig(BaseConfig):
             raise ValueError(f"max_seq_len must be positive, got {self.max_seq_len}")
         if self.num_prediction_tasks is not None and self.num_prediction_tasks <= 0:
             raise ValueError(f"num_prediction_tasks must be positive when set, got {self.num_prediction_tasks}")
+        if self.prediction_task_type is not None:
+            allowed = {
+                "multitarget_regression",
+                "regression",
+                "classification",
+                "multilabel_classification",
+            }
+            if self.prediction_task_type not in allowed:
+                raise ValueError(
+                    f"prediction_task_type must be one of {sorted(allowed)}, got {self.prediction_task_type!r}"
+                )
         if self.generator_type not in ("unconditional", "tasar", "tasar_legacy"):
             raise ValueError(
                 f"generator_type must be one of 'unconditional', 'tasar', 'tasar_legacy', got {self.generator_type}"

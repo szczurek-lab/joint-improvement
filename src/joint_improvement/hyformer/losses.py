@@ -12,21 +12,20 @@ def compute_lm_loss(
     shift_labels: bool = True,
 ) -> torch.Tensor:
     """Compute language modeling loss."""
+    logits = logits.contiguous()
+    labels = labels.contiguous()
+
     if shift_labels:
-        shift_logits = logits[..., :-1, :].contiguous()
-        target_labels = labels[..., 1:].contiguous()
-    else:
-        shift_logits = logits
-        target_labels = labels
+        logits = logits[..., :-1, :].contiguous()
+        labels = labels[..., 1:].contiguous()
 
-    # Flatten and compute loss
-    batch_size, seq_len = shift_logits.shape[:2]
-    vocab_size = shift_logits.size(-1)
-    loss = F.cross_entropy(
-        shift_logits.view(batch_size * seq_len, vocab_size), target_labels.view(batch_size * seq_len), reduction="mean"
+    B, T = labels.shape
+    V = logits.size(-1)
+    return F.cross_entropy(
+        logits.reshape(B * T, V),
+        labels.reshape(B * T),
+        reduction="mean",
     )
-
-    return loss
 
 
 def compute_mlm_loss(
@@ -39,11 +38,15 @@ def compute_mlm_loss(
     The loss is computed only over masked positions (where labels != -100).
     Non-masked positions are ignored in the loss computation.
     """
+    # Make contiguous at the loss boundary (torch.compile-friendly)
+    logits = logits.contiguous()
+    labels = labels.contiguous()
+
     batch_size, seq_len = logits.shape[:2]
     vocab_size = logits.size(-1)
 
-    logits_flat = logits.contiguous().view(batch_size * seq_len, vocab_size)
-    labels_flat = labels.contiguous().view(batch_size * seq_len)
+    logits_flat = logits.reshape(batch_size * seq_len, vocab_size)
+    labels_flat = labels.reshape(batch_size * seq_len)
 
     # Create mask for valid (masked) positions
     valid_mask = labels_flat != -100
@@ -125,15 +128,26 @@ def compute_binary_classification(
 
     """
     # Single-label classification: Use CrossEntropyLoss (softmax over classes)
-    # labels: [B] with class indices
-    labels_clean = labels.clone()
-    if torch.isnan(labels).any():
-        labels_clean[torch.isnan(labels)] = ignore_index
+    # Expected shapes: logits [B, C], labels [B]
+    if labels.ndim != 1:
+        raise ValueError(f"Single-label classification expects labels shape [B], got {labels.shape}")
+
+    logits = logits.contiguous()
+    labels_clean = labels.contiguous().clone()
+
+    # Only floating labels can contain NaNs
+    if labels_clean.is_floating_point():
+        nan_mask = torch.isnan(labels_clean)
+        if nan_mask.any():
+            labels_clean[nan_mask] = ignore_index
 
     # If reduction is mean, we need to account for missing values
     if reduction == "mean":
         # Count valid (non-missing) samples
-        valid_mask = (labels_clean != ignore_index) & (~torch.isnan(labels))
+        if labels.is_floating_point():
+            valid_mask = (labels_clean != ignore_index) & (~torch.isnan(labels))
+        else:
+            valid_mask = labels_clean != ignore_index
         num_valid = valid_mask.sum().float()
         if num_valid > 0:
             # Recompute with proper normalization
@@ -300,19 +314,67 @@ def compute_regression_loss(
     return loss
 
 
+def compute_multitarget_regression_loss(
+    logits: torch.Tensor,
+    labels: torch.Tensor,
+    reduction: str = "mean",
+) -> torch.Tensor:
+    """Compute multi-target regression loss with support for missing values.
+
+    This is MSE over all valid (non-NaN) target entries.
+
+    Parameters
+    ----------
+    logits : torch.Tensor
+        Predictions tensor of shape [B, D].
+    labels : torch.Tensor
+        Target tensor of shape [B, D]. Missing values should be NaN.
+    reduction : str, default="mean"
+        Reduction method: "mean", "sum", or "none".
+    """
+    if logits.ndim != 2 or labels.ndim != 2:
+        raise ValueError(f"Expected logits/labels to be 2D [B, D]. Got logits={logits.shape}, labels={labels.shape}")
+
+    logits = logits.contiguous()
+    labels_float = labels.contiguous().to(dtype=logits.dtype)
+    valid_mask = ~torch.isnan(labels_float)
+
+    squared_errors = (logits - labels_float) ** 2
+
+    if reduction == "none":
+        out = squared_errors
+        out[~valid_mask] = float("nan")
+        return out
+
+    # Aggregate only valid entries
+    num_valid = valid_mask.sum().to(dtype=logits.dtype)
+    if num_valid == 0:
+        return torch.tensor(0.0, device=logits.device, requires_grad=True)
+
+    loss_sum = torch.where(valid_mask, squared_errors, torch.zeros_like(squared_errors)).sum()
+    if reduction == "sum":
+        return loss_sum
+    if reduction == "mean":
+        return loss_sum / num_valid
+    raise ValueError(f"Unsupported reduction: {reduction}. Choose from 'mean', 'sum', 'none'")
+
+
 def compute_prediction_loss(
     logits: torch.Tensor,
     labels: torch.Tensor,
-    num_labels: int,
+    *,
     ignore_index: int = -1,
     reduction: str = "mean",
-    multilabel: bool = False,
+    task_type: str,
 ) -> torch.Tensor:
     """
     Compute prediction loss for downstream tasks (classification or regression).
 
-    Automatically selects the appropriate loss function based on num_labels.
-    Supports missing values in labels.
+    Select the appropriate prediction loss based on `task_type`.
+
+    This function is intentionally strict: loss selection should come from the
+    configured prediction task type (e.g. via `HyformerConfig.prediction_task_type`)
+    rather than heuristics on dtype/shape.
 
     Parameters
     ----------
@@ -324,19 +386,18 @@ def compute_prediction_loss(
         For multi-label classification: Target labels of shape [B, num_labels] with binary values.
         For regression: Target values of shape [B, 1] or [B].
         Missing values: NaN or ignore_index for classification, NaN for regression.
-    num_labels : int
-        Number of output labels. If 1, uses regression loss (MSE).
-        Otherwise, uses classification loss.
-        For binary classification, num_labels=2.
     ignore_index : int, default=-1
         Value to ignore in labels for single-label classification (treated as missing).
         Also ignores NaN values.
     reduction : str, default="mean"
         Reduction method: "mean", "sum", or "none".
-    multilabel : bool, default=False
-        If True, treats as multi-label classification (each sample can have multiple labels).
-        If False, treats as single-label classification (each sample has one label).
-        Only applies when num_labels > 1.
+    task_type : str
+        Prediction task type to select the loss function.
+        Supported values:
+        - "multitarget_regression"
+        - "regression"
+        - "classification"
+        - "multilabel_classification"
 
     Returns
     -------
@@ -348,28 +409,28 @@ def compute_prediction_loss(
     >>> # Multi-class classification (single-label) with missing values
     >>> logits = torch.randn(4, 10)
     >>> labels = torch.tensor([0, 1, -1, 5])  # -1 is missing
-    >>> loss = compute_prediction_loss(logits, labels, num_labels=10)
+    >>> loss = compute_prediction_loss(logits, labels, task_type="classification")
     >>> loss.shape
     torch.Size([])  # Scalar
 
     >>> # Binary classification (single-label) with missing values
     >>> logits = torch.randn(4, 2)
     >>> labels = torch.tensor([0, 1, -1, 1])  # -1 is missing
-    >>> loss = compute_prediction_loss(logits, labels, num_labels=2)
+    >>> loss = compute_prediction_loss(logits, labels, task_type="classification")
     >>> loss.shape
     torch.Size([])  # Scalar
 
     >>> # Multi-label classification
     >>> logits = torch.randn(4, 5)  # 5 classes
     >>> labels = torch.tensor([[1, 0, 1, 0, 0], [0, 1, 0, 1, 1], [1, 1, 0, 0, 0], [0, 0, 0, 1, 0]])
-    >>> loss = compute_prediction_loss(logits, labels, num_labels=5, multilabel=True)
+    >>> loss = compute_prediction_loss(logits, labels, task_type="multilabel_classification")
     >>> loss.shape
     torch.Size([])  # Scalar
 
     >>> # Regression with missing values
     >>> logits = torch.randn(4, 1)
     >>> labels = torch.tensor([[1.0], [2.0], [float("nan")], [3.0]])  # NaN is missing
-    >>> loss = compute_prediction_loss(logits, labels, num_labels=1)
+    >>> loss = compute_prediction_loss(logits, labels, task_type="regression")
     >>> loss.shape
     torch.Size([])  # Scalar
 
@@ -380,12 +441,17 @@ def compute_prediction_loss(
     - Multi-label classification: labels shape [B, num_labels] with values 0 or 1, uses BCEWithLogitsLoss
     - Missing values are automatically handled and excluded from loss computation
     """
-    if num_labels == 1:
-        # Regression task
+    if task_type == "multitarget_regression":
+        return compute_multitarget_regression_loss(logits, labels, reduction=reduction)
+    if task_type == "regression":
         return compute_regression_loss(logits, labels, reduction=reduction)
-    elif multilabel:
-        # Multi-label classification
+    if task_type == "multilabel_classification":
         return compute_multilabel_classification(logits, labels, reduction=reduction)
-    else:
-        # Single-label classification (binary or multi-class)
+    if task_type == "classification":
         return compute_binary_classification(logits, labels, ignore_index=ignore_index, reduction=reduction)
+
+    raise ValueError(
+        "Unsupported task_type. Expected one of "
+        "['multitarget_regression', 'regression', 'classification', 'multilabel_classification'], "
+        f"got {task_type!r}"
+    )

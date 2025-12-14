@@ -235,3 +235,9 @@ data/*
 test.ipynb
 test_*.ipynb
 tmp/
+
+# scratch
+scratch/
+
+# logs
+logs/

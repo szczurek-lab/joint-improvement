@@ -94,6 +94,9 @@ class BaseCollatorWithPadding(ABC):
     ) -> tuple[list[list[int]], list[list[int]]]:
         """Apply padding to encoded sequences and attention masks.
 
+        Pads sequences to a multiple of 32 for optimal device performance (e.g., Tensor Core
+        efficiency on GPUs). This ensures better memory alignment and computational efficiency.
+
         Parameters
         ----------
         encoded : list[list[int]]
@@ -107,10 +110,13 @@ class BaseCollatorWithPadding(ABC):
             Padded encoded sequences and attention masks.
         """
         pad_token_id = self.tokenizer.pad_token_id
-        max_len = max(len(seq) for seq in input_ids)
+        # Fixed padding: pad to max_length (rounded to 32).
+        # This keeps tensor shapes/strides stable across batches, which is important for
+        # torch.compile / Inductor (avoids recompiles and stride-mismatch assertions).
+        pad_to_length = ((self.max_length + 31) // 32) * 32
 
-        input_ids = [seq + [pad_token_id] * (max_len - len(seq)) for seq in input_ids]
-        attention_mask = [mask + [0] * (max_len - len(mask)) for mask in attention_mask]
+        input_ids = [seq + [pad_token_id] * (pad_to_length - len(seq)) for seq in input_ids]
+        attention_mask = [mask + [0] * (pad_to_length - len(mask)) for mask in attention_mask]
         return input_ids, attention_mask
 
     def _prepare_inputs(self, batch: list[dict[str, Any]]) -> tuple[torch.Tensor, torch.Tensor]:

@@ -74,6 +74,7 @@ class Hyformer(PretrainedMixin, nn.Module):
         n_layers: int,
         max_seq_len: int,
         num_prediction_tasks: int | None = None,
+        prediction_task_type: str | None = None,
         attn_dropout: float = 0.0,
         resid_dropout: float = 0.0,
         eps: float = 1e-6,
@@ -81,6 +82,7 @@ class Hyformer(PretrainedMixin, nn.Module):
         super().__init__()
         self.vocab_size = vocab_size
         self.num_prediction_tasks = num_prediction_tasks
+        self.prediction_task_type = prediction_task_type
 
         self.embed = nn.Embedding(vocab_size, d_model)
         self.blocks = nn.ModuleList(
@@ -122,6 +124,7 @@ class Hyformer(PretrainedMixin, nn.Module):
         kv_caches: list[KVCache | None] | None = None,
         use_cache: bool = False,
         labels: torch.Tensor | None = None,
+        targets: torch.Tensor | None = None,
     ) -> ModelOutput:
         """
         Forward pass through the model.
@@ -145,7 +148,9 @@ class Hyformer(PretrainedMixin, nn.Module):
             Whether to use and update key-value caches for autoregressive
             generation.
         labels : Optional[torch.Tensor], default=None
-            Optional labels for computing loss. If provided, loss will be computed.
+            Labels for LM/MLM tasks. Used for computing loss for language modeling tasks.
+        targets : Optional[torch.Tensor], default=None
+            Targets for prediction/regression tasks. Required for computing loss for prediction tasks.
 
         Returns
         -------
@@ -153,7 +158,7 @@ class Hyformer(PretrainedMixin, nn.Module):
             Model output containing:
             - logits: Tensor of shape [B, T, vocab_size] for LM/MLM tasks,
                      or [B, num_prediction_tasks] for prediction tasks
-            - loss: Optional loss tensor if labels provided
+            - loss: Optional loss tensor if labels/targets provided
             - extras: Dict containing hidden_states and kv_caches
 
         Notes
@@ -196,26 +201,33 @@ class Hyformer(PretrainedMixin, nn.Module):
 
         # Compute logits from task-specific head
         if task == "prediction":
-            # For prediction tasks, use CLS token (first token) - DINOv2 best practice
-            # Ensure contiguous tensor to avoid compilation issues when switching tasks
-            pooled = x[:, 0, :].contiguous()  # [B, d_model]
+            pooled = x[:, 0, :]  # [B, d_model]
             logits = self.heads[task](pooled)  # [B, num_labels]
         else:
-            # For LM/MLM tasks, use full sequence
-            # Ensure contiguous tensor for consistent compilation behavior
-            logits = self.heads[task](x.contiguous())  # [B, T, vocab_size]
+            logits = self.heads[task](x)  # [B, T, vocab_size]
 
-        # Compute loss if labels provided
+        # Compute loss if labels/targets provided
         loss = None
-        if labels is not None:
+        if task == "prediction":
+            if targets is not None:
+                if self.num_prediction_tasks is None:
+                    raise ValueError("num_prediction_tasks must be set for prediction task")
+                if self.prediction_task_type is None:
+                    raise ValueError(
+                        "prediction_task_type must be set for prediction task "
+                    )
+                loss = compute_prediction_loss(
+                    logits,
+                    targets,
+                    ignore_index=-1,
+                    reduction="mean",
+                    task_type=self.prediction_task_type,
+                )
+        elif labels is not None:
             if task == "lm":
                 loss = compute_lm_loss(logits, labels, shift_labels=is_causal)
             elif task == "mlm":
                 loss = compute_mlm_loss(logits, labels)
-            elif task == "prediction":
-                if self.num_prediction_tasks is None:
-                    raise ValueError("num_prediction_tasks must be set for prediction task")
-                loss = compute_prediction_loss(logits, labels, num_labels=self.num_prediction_tasks)
 
         # Store hidden states and kv_caches in extras
         extras = {
@@ -318,6 +330,7 @@ class Hyformer(PretrainedMixin, nn.Module):
             "num_prediction_tasks": int(config_dict["num_prediction_tasks"])
             if config_dict.get("num_prediction_tasks") is not None
             else None,
+            "prediction_task_type": config_dict.get("prediction_task_type"),
             "attn_dropout": config_dict.get("attn_dropout", 0.0),
             "resid_dropout": config_dict.get("resid_dropout", 0.0),
             "eps": config_dict.get("eps", 1e-6),
