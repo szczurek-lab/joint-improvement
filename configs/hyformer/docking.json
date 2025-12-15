@@ -8,7 +8,7 @@
   "resid_dropout": 0.0,
   "eps": 1e-6,
   "num_prediction_tasks": 3,
-  "prediction_task_type": "multitarget_regression",
+  "prediction_task_type": "regression",
   "generator_type": "unconditional"
 }
 

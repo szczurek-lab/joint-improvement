@@ -70,24 +70,21 @@ class SelfAttention(nn.Module):
         self.head_dim = d_model // n_heads
         self.max_seq_len = max_seq_len
 
-        # Projections (no bias)
         self.q_proj = nn.Linear(d_model, d_model, bias=False)
         self.k_proj = nn.Linear(d_model, d_model, bias=False)
         self.v_proj = nn.Linear(d_model, d_model, bias=False)
         self.o_proj = nn.Linear(d_model, d_model, bias=False)
 
-        self.attn_dropout_p = attn_dropout
-
-        # Rotary positional embedding
+        self.attn_dropout = attn_dropout
         self.rotary = RotaryPositionalEmbedding(self.head_dim)
 
     def forward(
         self,
         x: torch.Tensor,
+        is_causal: bool,
         attn_mask: torch.Tensor | None = None,
         kv_cache: KVCache | None = None,
-        use_cache: bool = False,
-        is_causal: bool = True,
+        use_cache: bool = False
     ) -> tuple[torch.Tensor, KVCache | None]:
         """
         Forward pass through self-attention.
@@ -119,13 +116,16 @@ class SelfAttention(nn.Module):
             - Output tensor of shape [B, T_q, D]
             - Updated key-value cache (or None if not used)
         """
-        # For causal attention, we don't need an explicit mask (PyTorch handles it)
-        # For bidirectional attention, we need a mask (can be all zeros if no padding)
+        
+        if is_causal and attn_mask is not None:
+            raise ValueError("Causal attention does not support an explicit attention mask.")
         if not is_causal and attn_mask is None:
-            # Create a default bidirectional mask (all zeros = no masking)
-            B, T_q, _ = x.shape
-            attn_mask = torch.zeros(B, self.n_heads, T_q, T_q, device=x.device, dtype=x.dtype)
-
+            raise ValueError("Bidirectional attention requires an attention mask.")
+        
+        if attn_mask is not None:
+            # Convert [B, T] padding mask (1=keep, 0=pad) -> SDPA bool mask [B, 1, 1, T] (True=mask)
+            attn_mask = (attn_mask == 0).unsqueeze(1).unsqueeze(2)
+        
         # Get batch size and query sequence length
         B, T_q, _ = x.shape
 
@@ -139,7 +139,7 @@ class SelfAttention(nn.Module):
         k_seq_head = k_lin.view(B, T_q, self.n_heads, self.head_dim)
 
         # Compute offset for rotary embeddings (for incremental generation)
-        seq_offset = kv_cache.length if (use_cache and kv_cache) else 0
+        seq_offset = kv_cache.length if (use_cache and kv_cache is not None) else 0
 
         # Apply rotary positional embeddings
         q_rot = self.rotary(q_seq_head, offset=seq_offset)
@@ -166,17 +166,24 @@ class SelfAttention(nn.Module):
         else:
             k, v = k_new, v_new
 
-        # Scaled dot-product attention via PyTorch SDPA
-        # Fast path when mask=None and is_causal=True
-        sdpa_causal = is_causal and (attn_mask is None)
+        # When using a KV cache, query positions are offset by seq_offset.
+        # PyTorch SDPA's built-in `is_causal=True` assumes queries start at 0,
+        # so for seq_offset > 0 we must avoid the built-in causal path. For
+        # multi-token chunks (T_q > 1), we additionally apply an offset-aware
+        # causal mask to prevent looking ahead within the chunk.
+        if is_causal and use_cache and seq_offset > 0 and T_q > 1:
+            T_k = k.shape[-2]
+            q_pos = (seq_offset + torch.arange(T_q, device=x.device)).unsqueeze(1)  # [T_q, 1]
+            k_pos = torch.arange(T_k, device=x.device).unsqueeze(0)  # [1, T_k]
+            attn_mask = k_pos > q_pos  # bool mask; True means "mask out"
 
         y = F.scaled_dot_product_attention(
             q,
             k,
             v,
             attn_mask=attn_mask,
-            dropout_p=self.attn_dropout_p if self.training else 0.0,
-            is_causal=sdpa_causal,
+            dropout_p=self.attn_dropout if self.training else 0.0,
+            is_causal=is_causal,
         )  # [B, H, T_q, Hd]
 
         # Merge heads and project output

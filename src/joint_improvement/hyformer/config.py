@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
+from pathlib import Path
 
 from joint_improvement.utils.config import BaseConfig
 
@@ -43,9 +45,8 @@ class HyformerConfig(BaseConfig):
         Explicit type of the "prediction" task to select the correct loss.
         If None, the loss is inferred from targets dtype/shape.
         Supported values:
-        - "multitarget_regression"
         - "regression"
-        - "classification"
+        - "binary_classification"
         - "multilabel_classification"
     """
 
@@ -63,6 +64,23 @@ class HyformerConfig(BaseConfig):
     num_prediction_tasks: int | None = None
     prediction_task_type: str | None = None
     generator_type: str = "unconditional"
+
+    @classmethod
+    def from_json(cls, path: str | Path) -> HyformerConfig:
+        """Load configuration from JSON."""
+        path = Path(path)
+        if not path.exists():
+            raise FileNotFoundError(f"Configuration file not found: {path}")
+
+        with path.open("r", encoding="utf-8") as f:
+            config_dict = json.load(f)
+
+        return cls(**config_dict)
+
+    @classmethod
+    def from_pretrained(cls, path: str | Path) -> HyformerConfig:
+        """Alias for from_json (keeps interface consistent)."""
+        return cls.from_json(path)
 
     def __post_init__(self) -> None:
         """Validate configuration parameters."""
@@ -88,12 +106,13 @@ class HyformerConfig(BaseConfig):
                 f"predictor_head_act_fn must be one of {sorted(allowed_act_fns)}, got {self.predictor_head_act_fn!r}"
             )
         if self.num_prediction_tasks is not None and self.num_prediction_tasks <= 0:
-            raise ValueError(f"num_prediction_tasks must be positive when set, got {self.num_prediction_tasks}")
+            raise ValueError(
+                f"num_prediction_tasks must be positive when set, got {self.num_prediction_tasks}"
+            )
         if self.prediction_task_type is not None:
             allowed = {
-                "multitarget_regression",
                 "regression",
-                "classification",
+                "binary_classification",
                 "multilabel_classification",
             }
             if self.prediction_task_type not in allowed:

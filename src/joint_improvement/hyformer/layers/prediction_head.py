@@ -17,11 +17,11 @@ class PredictionHeadModule(nn.Module):
     ----------
     d_model : int
         Model dimension (hidden size).
-    num_labels : int
-        Number of output labels/classes for the prediction task.
-        - For binary classification: num_labels=2
-        - For multi-class classification: num_labels>2
-        - For regression: num_labels=1
+    num_targets : int
+        Number of output targets for the prediction task.
+        - For binary classification: num_targets=1 (logit for class=1)
+        - For multilabel classification: num_targets=K
+        - For regression: num_targets=K
     dropout : float, default=0.1
         Dropout probability applied before the classifier.
     depth : int, default=1
@@ -57,7 +57,7 @@ class PredictionHeadModule(nn.Module):
     def __init__(
         self,
         d_model: int,
-        num_labels: int,
+        num_targets: int,
         dropout: float,
         depth: int,
         act_fn: str,
@@ -81,7 +81,7 @@ class PredictionHeadModule(nn.Module):
                 layers.append(nn.Dropout(dropout))
             self.mlp = nn.Sequential(*layers)
 
-        self.classifier = nn.Linear(d_model, num_labels)
+        self.classifier = nn.Linear(d_model, num_targets)
 
         # Initialize weights
         self._init_weights()
@@ -122,7 +122,7 @@ class PredictionHeadModule(nn.Module):
         Returns
         -------
         torch.Tensor
-            Logits tensor of shape [B, num_labels].
+            Logits tensor of shape [B, num_targets].
         """
         # DINOv2 best practices: Normalize before classifier for stable training
         pooled = self.norm(pooled)
