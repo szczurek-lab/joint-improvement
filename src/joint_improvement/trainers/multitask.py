@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 import torch
 from loguru import logger
 from torch.utils.data import DataLoader
+from tqdm.auto import tqdm
 
 from joint_improvement.hyformer.inputs import ModelInput
 
@@ -334,6 +335,31 @@ class MultiTaskTrainer(TrainerCheckpointMixin):
             self.model.train()
         return task_losses, weighted_val_loss
 
+    @torch.inference_mode()
+    def test(self, dataloader: DataLoader) -> torch.Tensor:
+        """Run the model over a single-task dataloader and return concatenated logits."""
+        was_training = self.model.training
+        self.model.eval()
+
+        logits_chunks: list[torch.Tensor] = []
+        expected_task: str | None = None
+        for batch in tqdm(dataloader, desc="Testing", leave=False):
+            if expected_task is None:
+                expected_task = batch.task
+            elif batch.task != expected_task:
+                raise ValueError(f"Mixed tasks in dataloader: expected '{expected_task}', got '{batch.task}'")
+
+            with self.ctx:
+                outputs = self.model(**batch.to(self.device))
+            logits_chunks.append(outputs.logits.detach().float().to(device="cpu"))
+
+        if was_training:
+            self.model.train()
+
+        if not logits_chunks:
+            return torch.empty((0,), dtype=torch.float32)
+        return torch.cat(logits_chunks, dim=0)
+
     def _infer_total_num_iters(self, train_loaders: dict[str, DataLoader]) -> tuple[int, int]:
         """Calculate total iterations: batches_per_epoch = Σ(prob_i × length_i)."""
         task_names = list(train_loaders.keys())
@@ -426,6 +452,7 @@ class MultiTaskTrainer(TrainerCheckpointMixin):
 
                 if weighted_val_loss < self.state.best_val_loss:
                     self.state.best_val_loss = weighted_val_loss
+                    self.state.best_epoch = self.state.epoch
                     if self.out_dir:
                         # Save trainer checkpoint (optimizer + trainer state)
                         best_trainer_path = self.out_dir / self.BEST_CHECKPOINT_FILE_NAME
@@ -456,3 +483,9 @@ class MultiTaskTrainer(TrainerCheckpointMixin):
                 self.model.save_pretrained(model_path)
 
             self.state.epoch += 1
+
+        # optionally reload best model weights at end
+        if val_loaders and self.out_dir:
+            best_model_path = self.out_dir / self.BEST_MODEL_CHECKPOINT_FILE_NAME
+            if best_model_path.exists():
+                self.model.load_pretrained(best_model_path, device=self.device, strict=True)

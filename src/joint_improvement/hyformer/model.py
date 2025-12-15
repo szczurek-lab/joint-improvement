@@ -77,6 +77,9 @@ class Hyformer(PretrainedMixin, nn.Module):
         prediction_task_type: str | None = None,
         attn_dropout: float = 0.0,
         resid_dropout: float = 0.0,
+        predictor_dropout: float = 0.0,
+        predictor_head_depth: int = 1,
+        predictor_head_act_fn: str = "gelu",
         eps: float = 1e-6,
     ) -> None:
         super().__init__()
@@ -110,10 +113,11 @@ class Hyformer(PretrainedMixin, nn.Module):
             self.heads["prediction"] = PredictionHeadModule(
                 d_model=d_model,
                 num_labels=num_prediction_tasks,
-                dropout=0.1,
+                dropout=predictor_dropout,
+                depth=predictor_head_depth,
+                act_fn=predictor_head_act_fn,
             )
 
-        # Apply LLaMA-specific weight initialization
         self._apply_llama_init()
 
     def forward(
@@ -333,6 +337,9 @@ class Hyformer(PretrainedMixin, nn.Module):
             "prediction_task_type": config_dict.get("prediction_task_type"),
             "attn_dropout": config_dict.get("attn_dropout", 0.0),
             "resid_dropout": config_dict.get("resid_dropout", 0.0),
+            "predictor_dropout": config_dict.get("predictor_dropout", 0.0),
+            "predictor_head_depth": int(config_dict.get("predictor_head_depth", 1)),
+            "predictor_head_act_fn": config_dict.get("predictor_head_act_fn", "gelu"),
             "eps": config_dict.get("eps", 1e-6),
         }
         if generator_type == "unconditional":

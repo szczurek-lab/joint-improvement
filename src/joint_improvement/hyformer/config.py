@@ -27,6 +27,14 @@ class HyformerConfig(BaseConfig):
         Attention dropout probability.
     resid_dropout : float, default=0.0
         Residual dropout probability.
+    predictor_dropout : float, default=0.0
+        Dropout probability used inside the prediction head (when enabled).
+    predictor_head_depth : int, default=1
+        Depth of the prediction head after normalization. If 1, uses a single linear layer.
+        If >1, uses an MLP stack before the final classifier/regressor.
+    predictor_head_act_fn : str, default="gelu"
+        Activation function used for the MLP when predictor_head_depth > 1.
+        Supported: "gelu", "relu", "silu".
     eps : float, default=1e-6
         RMSNorm epsilon value.
     num_prediction_tasks : int | None, default=None
@@ -48,6 +56,9 @@ class HyformerConfig(BaseConfig):
     max_seq_len: int = 128
     attn_dropout: float = 0.0
     resid_dropout: float = 0.0
+    predictor_dropout: float = 0.0
+    predictor_head_depth: int = 2
+    predictor_head_act_fn: str = "gelu"
     eps: float = 1e-6
     num_prediction_tasks: int | None = None
     prediction_task_type: str | None = None
@@ -67,6 +78,15 @@ class HyformerConfig(BaseConfig):
             raise ValueError(f"vocab_size must be positive, got {self.vocab_size}")
         if self.max_seq_len <= 0:
             raise ValueError(f"max_seq_len must be positive, got {self.max_seq_len}")
+        if not (0.0 <= self.predictor_dropout <= 1.0):
+            raise ValueError(f"predictor_dropout must be in [0, 1], got {self.predictor_dropout}")
+        if self.predictor_head_depth < 1:
+            raise ValueError(f"predictor_head_depth must be >= 1, got {self.predictor_head_depth}")
+        allowed_act_fns = {"gelu", "relu", "silu"}
+        if self.predictor_head_act_fn.lower().strip() not in allowed_act_fns:
+            raise ValueError(
+                f"predictor_head_act_fn must be one of {sorted(allowed_act_fns)}, got {self.predictor_head_act_fn!r}"
+            )
         if self.num_prediction_tasks is not None and self.num_prediction_tasks <= 0:
             raise ValueError(f"num_prediction_tasks must be positive when set, got {self.num_prediction_tasks}")
         if self.prediction_task_type is not None:
