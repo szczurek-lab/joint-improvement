@@ -65,4 +65,10 @@ def test_lm_collator_basic():
     )
     assert batch["task"] == "lm"
     assert batch["targets"] is None
-    assert torch.equal(batch["labels"][0], batch["input_ids"][0])
+    # Labels: task token + padding must be ignored (-100)
+    assert batch["labels"] is not None
+    assert batch["labels"].shape == batch["input_ids"].shape
+    assert batch["labels"][0, 0].item() == -100
+    pad_positions = batch["attention_mask"][0] == 0
+    if pad_positions.any():
+        assert (batch["labels"][0][pad_positions] == -100).all()
