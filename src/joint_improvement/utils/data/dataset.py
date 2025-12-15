@@ -46,7 +46,7 @@ class SequenceDataset(Dataset):
     """
 
     SEQUENCE_FIELD: str = "sequence"
-    TARGET_FIELD: str = "labels"
+    TARGET_FIELD: str = "targets"
 
     def __init__(
         self,
