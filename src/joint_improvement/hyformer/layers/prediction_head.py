@@ -59,8 +59,8 @@ class PredictionHeadModule(nn.Module):
         d_model: int,
         num_labels: int,
         dropout: float,
-        depth: int = 1,
-        act_fn: str = "gelu",
+        depth: int,
+        act_fn: str,
     ) -> None:
         super().__init__()
         if depth < 1:

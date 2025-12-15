@@ -78,7 +78,7 @@ class Hyformer(PretrainedMixin, nn.Module):
         attn_dropout: float = 0.0,
         resid_dropout: float = 0.0,
         predictor_dropout: float = 0.0,
-        predictor_head_depth: int = 1,
+        predictor_head_depth: int = 2,
         predictor_head_act_fn: str = "gelu",
         eps: float = 1e-6,
     ) -> None:
