@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import torch
 import torch.nn.functional as F
-from loguru import logger
 
 
 def compute_lm_loss(
@@ -45,7 +44,6 @@ def compute_mlm_loss(
     reduction: str = "mean",
 ) -> torch.Tensor:
     """Compute masked language modeling loss with optional label smoothing."""
-    
     logits = logits.contiguous()
     labels = labels.contiguous()
 
@@ -95,47 +93,33 @@ def compute_binary_classification_loss(
 
     logits = logits.contiguous()
     targets = targets.contiguous()
-    
-    valid = torch.isfinite(targets) & (targets != ignore_index)
-    if valid.all():
-        B = logits.shape[0]
-        return F.binary_cross_entropy_with_logits(logits.reshape(B), targets.reshape(B), reduction=reduction)
 
-    # Binary logistic regression convention: logits [B, 1]
-    if logits.size(-1) == 1:
-        # Accept float targets (optionally with NaNs) or integer/bool targets (0/1 with missing as ignore_index).
-        if t_in.is_floating_point():
-            valid = torch.isfinite(t_in) & (t_in != float(ignore_index))
-            y = t_in.to(dtype=logits.dtype)
-        else:
-            valid = t_in != ignore_index
-            y = t_in.to(dtype=logits.dtype)
-        y_filled = torch.where(valid, y, torch.zeros_like(y))
-        per_sample = F.binary_cross_entropy_with_logits(logits.squeeze(-1), y_filled, reduction="none")
+    # Define is_valid mask: finite values and not equal to ignore_index
+    if targets.is_floating_point():
+        is_valid = torch.isfinite(targets) & (targets != float(ignore_index))
     else:
-        if logits.size(-1) == 2:
-            raise ValueError(
-                "Binary classification must use logits shape [B, 1] (not [B, 2]). "
-                "Please change the head output dimension to 1 and use targets in {0,1}."
-            )
-        # Accept [B] or [B,1] long targets for multi-class.
-        if t_in.dtype != torch.long:
-            raise ValueError(
-                "Multi-class softmax classification (logits shape [B, C], C>=3) expects int64 targets with missing as -1. "
-                f"Got targets dtype={t_in.dtype}."
-            )
-        if logits.size(-1) < 3:
-            raise ValueError(f"Multi-class classification expects C>=3, got logits shape {logits.shape}")
-        valid = t_in != ignore_index
-        per_sample = F.cross_entropy(logits, t_in, ignore_index=ignore_index, reduction="none")
+        is_valid = targets != ignore_index
+
+    # If all valid, compute loss directly
+    if is_valid.all():
+        B = logits.shape[0]
+        return F.binary_cross_entropy_with_logits(
+            logits.reshape(B), targets.reshape(B), reduction=reduction
+        )
+
+    # Otherwise, mask invalid entries
+    targets_filled = torch.where(is_valid, targets, torch.zeros_like(targets))
+    per_sample = F.binary_cross_entropy_with_logits(
+        logits.squeeze(-1), targets_filled.squeeze(-1), reduction="none"
+    )
 
     if reduction == "none":
-        return torch.where(valid, per_sample, torch.full_like(per_sample, float("nan")))
+        return torch.where(is_valid.squeeze(-1), per_sample, torch.full_like(per_sample, float("nan")))
     if reduction == "sum":
-        return torch.where(valid, per_sample, torch.zeros_like(per_sample)).sum()
+        return torch.where(is_valid.squeeze(-1), per_sample, torch.zeros_like(per_sample)).sum()
     if reduction == "mean":
-        if valid.any():
-            return per_sample[valid].mean()
+        if is_valid.any():
+            return per_sample[is_valid.squeeze(-1)].mean()
         return logits.sum() * 0.0
     raise ValueError(f"Unsupported reduction: {reduction}. Choose from 'mean', 'sum', 'none'")
 
@@ -144,31 +128,38 @@ def compute_multilabel_classification_loss(
     logits: torch.Tensor,
     targets: torch.Tensor,
     reduction: str = "mean",
+    ignore_index: int = -1,
 ) -> torch.Tensor:
     """BCE-with-logits over valid label entries; missing values are ignored.
 
-    Missing values are assumed to be either non-finite (NaN/±Inf) or -1.
+    Missing values are assumed to be either non-finite (NaN/±Inf) or ignore_index.
     """
     logits = logits.contiguous()
     targets = targets.contiguous()
     if not targets.is_floating_point():
         raise ValueError(f"Multilabel BCE expects floating targets. Got targets dtype={targets.dtype}.")
 
-    # Missing labels are either NaN/±Inf or -1
-    valid = torch.isfinite(targets) & (targets != -1)
-    y_filled = torch.where(valid, y, torch.zeros_like(y))
-    per_entry = F.binary_cross_entropy_with_logits(logits, y_filled, reduction="none")
+    # Define is_valid mask: finite values and not equal to ignore_index
+    is_valid = torch.isfinite(targets) & (targets != ignore_index)
+
+    # If all valid, compute loss directly
+    if is_valid.all():
+        return F.binary_cross_entropy_with_logits(logits, targets, reduction=reduction)
+
+    # Otherwise, mask invalid entries
+    targets_filled = torch.where(is_valid, targets, torch.zeros_like(targets))
+    per_entry = F.binary_cross_entropy_with_logits(logits, targets_filled, reduction="none")
 
     if reduction == "none":
-        return torch.where(valid, per_entry, torch.full_like(per_entry, float("nan")))
+        return torch.where(is_valid, per_entry, torch.full_like(per_entry, float("nan")))
     if reduction == "sum":
-        return torch.where(valid, per_entry, torch.zeros_like(per_entry)).sum()
+        return torch.where(is_valid, per_entry, torch.zeros_like(per_entry)).sum()
     if reduction == "mean":
         # DINO-style batch-mean, but make it robust to per-sample label sparsity:
         # average per sample over available labels, then average over samples.
-        if valid.any():
-            per_sample_sum = torch.where(valid, per_entry, torch.zeros_like(per_entry)).sum(dim=-1)  # [B]
-            per_sample_cnt = valid.sum(dim=-1)  # [B]
+        if is_valid.any():
+            per_sample_sum = torch.where(is_valid, per_entry, torch.zeros_like(per_entry)).sum(dim=-1)  # [B]
+            per_sample_cnt = is_valid.sum(dim=-1)  # [B]
             has_any = per_sample_cnt > 0
             per_sample_mean = per_sample_sum / per_sample_cnt.clamp_min(1).to(dtype=per_entry.dtype)
             return per_sample_mean[has_any].mean()
@@ -196,29 +187,26 @@ def compute_regression_loss(
     if not targets.is_floating_point():
         raise ValueError(f"Regression MSE expects floating targets. Got targets dtype={targets.dtype}.")
 
-    # Missing targets are either NaN/±Inf or -1
-    valid = torch.isfinite(targets) & (targets != ignore_index)
-    if valid.all():
+    # Define is_valid mask: finite values and not equal to ignore_index
+    is_valid = torch.isfinite(targets) & (targets != ignore_index)
+
+    # If all valid, compute loss directly
+    if is_valid.all():
         return F.mse_loss(logits, targets, reduction=reduction)
 
-    logger.warning(
-        "Regression masking for missing targets (NaN/-1) is not verified."
-    )
-    
-    #TODO: verify against Uni-Mol/reference: https://github.com/deepmodeling/Uni-Mol/blob/main/unimol/unimol/losses/reg_loss.py
-
-    targets_filled = torch.nan_to_num(targets, nan=0.0, posinf=0.0, neginf=0.0)
+    # Otherwise, mask invalid entries
+    targets_filled = torch.where(is_valid, targets, torch.zeros_like(targets))
     per_entry = F.mse_loss(logits, targets_filled, reduction="none")
 
     if reduction == "none":
-        return torch.where(valid, per_entry, torch.full_like(per_entry, float("nan")))
+        return torch.where(is_valid, per_entry, torch.full_like(per_entry, float("nan")))
     if reduction == "sum":
-        return torch.where(valid, per_entry, torch.zeros_like(per_entry)).sum()
+        return torch.where(is_valid, per_entry, torch.zeros_like(per_entry)).sum()
     if reduction == "mean":
         # Robust per-sample averaging (prevents samples with more valid targets dominating).
-        if valid.any():
-            per_sample_sum = torch.where(valid, per_entry, torch.zeros_like(per_entry)).sum(dim=-1)  # [B]
-            per_sample_cnt = valid.sum(dim=-1)  # [B]
+        if is_valid.any():
+            per_sample_sum = torch.where(is_valid, per_entry, torch.zeros_like(per_entry)).sum(dim=-1)  # [B]
+            per_sample_cnt = is_valid.sum(dim=-1)  # [B]
             has_any = per_sample_cnt > 0
             per_sample_mean = per_sample_sum / per_sample_cnt.clamp_min(1).to(dtype=per_entry.dtype)
             return per_sample_mean[has_any].mean()
@@ -237,7 +225,7 @@ def compute_prediction_loss(
     if prediction_task_type == "regression":
         return compute_regression_loss(logits, targets, reduction=reduction, ignore_index=ignore_index)
     if prediction_task_type == "multilabel_classification":
-        return compute_multilabel_classification_loss(logits, targets, reduction=reduction)
+        return compute_multilabel_classification_loss(logits, targets, reduction=reduction, ignore_index=ignore_index)
     if prediction_task_type == "binary_classification":
         return compute_binary_classification_loss(logits, targets, ignore_index=ignore_index, reduction=reduction)
     raise ValueError(

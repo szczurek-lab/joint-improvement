@@ -437,6 +437,7 @@ class MultiTaskTrainer(TrainerCheckpointMixin):
                     tokens_per_sec = log_tokens / elapsed if elapsed > 0 else 0.0
                     logger.info(
                         f"Step {global_iter}: "
+                        f"task {task_name}, "
                         f"loss {last_loss:.4f}, "
                         f"grad_norm {last_grad_norm:.4f}, "
                         f"lr {self.state.current_lr:.6f}, "
