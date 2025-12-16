@@ -9,7 +9,7 @@ from torch import nn
 from .rotary import RotaryPositionalEmbedding
 
 
-class SelfAttention(nn.Module):
+class HybridSelfAttention(nn.Module):
 
     def __init__(
         self, d_model: int, n_heads: int, attn_dropout_p: float, max_seq_len: int
@@ -28,18 +28,7 @@ class SelfAttention(nn.Module):
     def forward(
         self, x: torch.Tensor, attn_mask: torch.Tensor, is_causal: bool
     ) -> torch.Tensor:
-        """Forward pass of the attention layer.
 
-        Args:
-            x (torch.Tensor): Input tensor of shape (batch_size, seq_len, embedding_dim)
-            attn_mask (torch.Tensor): Mask tensor of shape (batch_size, seq_len) and type torch.bool
-            is_causal (bool): If True, the model is autoregressive and variable `mask` is ignored
-
-        Returns
-        -------
-            torch.Tensor: Output tensor of shape (batch_size, seq_len, embedding_dim)
-
-        """
         B, T, D = x.shape
 
         q, k, v = self.qkv(x).split(D, dim=2)  # 3 * (B, T, D)
@@ -51,14 +40,14 @@ class SelfAttention(nn.Module):
         q = self.relative_embedding(q)
         k = self.relative_embedding(k)
 
-        q = q.transpose(1, 2)  # (B, n_heads, T, head_dim)
-        k = k.transpose(1, 2)  # (B, n_heads, T, head_dim)
-        v = v.transpose(1, 2)  # (B, n_heads, T, head_dim)
+        q = q.transpose(1, 2)
+        k = k.transpose(1, 2)
+        v = v.transpose(1, 2)
 
         if is_causal:
             attn_mask = None
         else:
-            attn_mask = attn_mask.unsqueeze(1).unsqueeze(1).expand(B, self.n_heads, T, T)  # (B, n_heads, T, T)
+            attn_mask = attn_mask.bool().unsqueeze(1).unsqueeze(1).expand(B, self.n_heads, T, T)  # (B, n_heads, T, T)
 
         y = F.scaled_dot_product_attention(
             q,
@@ -72,4 +61,4 @@ class SelfAttention(nn.Module):
         y = y.transpose(1, 2).contiguous().view(B, T, D)  # (B, T, D)
         y = self.out(y)
 
-        return y, None
+        return y
