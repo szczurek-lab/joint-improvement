@@ -11,8 +11,8 @@ DTYPE = torch.float32
 
 
 class RotaryPositionalEmbedding(nn.Module):
-    """
-    Applies Rotary Positional Encoding to a tensor of shape [BATCH, SEQ_LEN, NUM_HEADS, HEAD_DIM].
+    """Applies Rotary Positional Encoding to a tensor of shape [BATCH, SEQ_LEN, NUM_HEADS, HEAD_DIM].
+
     Offset allows to apply rotary to sequnce part by part by telling how much tokens preecede the input in the sequence.
     """
 

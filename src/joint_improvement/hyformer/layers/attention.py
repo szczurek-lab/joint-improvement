@@ -6,20 +6,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-from .kv_cache import KVCache
 from .rotary import RotaryPositionalEmbedding
-
-
-import math
-import torch
-import warnings
-
-import torch.nn as nn
-import torch.nn.functional as F
-
-from typing import Optional
-
-from hyformer.models.layers.rotary import RotaryPositionalEmbedding
 
 
 class SelfAttention(nn.Module):
@@ -48,21 +35,22 @@ class SelfAttention(nn.Module):
             attn_mask (torch.Tensor): Mask tensor of shape (batch_size, seq_len) and type torch.bool
             is_causal (bool): If True, the model is autoregressive and variable `mask` is ignored
 
-        Returns:
+        Returns
+        -------
             torch.Tensor: Output tensor of shape (batch_size, seq_len, embedding_dim)
 
         """
         B, T, D = x.shape
 
         q, k, v = self.qkv(x).split(D, dim=2)  # 3 * (B, T, D)
-        
+
         q = q.view(B, T, self.n_heads, self.head_dim)
         k = k.view(B, T, self.n_heads, self.head_dim)
         v = v.view(B, T, self.n_heads, self.head_dim)
 
         q = self.relative_embedding(q)
         k = self.relative_embedding(k)
-       
+
         q = q.transpose(1, 2)  # (B, n_heads, T, head_dim)
         k = k.transpose(1, 2)  # (B, n_heads, T, head_dim)
         v = v.transpose(1, 2)  # (B, n_heads, T, head_dim)
@@ -71,7 +59,7 @@ class SelfAttention(nn.Module):
             attn_mask = None
         else:
             attn_mask = attn_mask.unsqueeze(1).unsqueeze(1).expand(B, self.n_heads, T, T)  # (B, n_heads, T, T)
-        
+
         y = F.scaled_dot_product_attention(
             q,
             k,
@@ -80,9 +68,8 @@ class SelfAttention(nn.Module):
             is_causal=is_causal,
             dropout_p=self.attn_dropout_p if self.training else 0.0,
         )  # (B, n_heads, T, head_dim)
-        
+
         y = y.transpose(1, 2).contiguous().view(B, T, D)  # (B, T, D)
         y = self.out(y)
 
         return y, None
-        
