@@ -342,13 +342,7 @@ class MultiTaskTrainer(TrainerCheckpointMixin):
         self.model.eval()
 
         logits_chunks: list[torch.Tensor] = []
-        expected_task: str | None = None
         for batch in tqdm(dataloader, desc="Testing", leave=False):
-            if expected_task is None:
-                expected_task = batch.task
-            elif batch.task != expected_task:
-                raise ValueError(f"Mixed tasks in dataloader: expected '{expected_task}', got '{batch.task}'")
-
             with self.ctx:
                 outputs = self.model(**batch.to(self.device))
             logits_chunks.append(outputs.logits.detach().float().to(device="cpu"))

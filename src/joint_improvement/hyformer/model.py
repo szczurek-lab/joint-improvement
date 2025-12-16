@@ -213,7 +213,7 @@ class Hyformer(PretrainedMixin, nn.Module):
     def predict(
         self,
         input_ids: torch.Tensor,
-        attention_mask: torch.Tensor | None = None,
+        attention_mask: torch.Tensor,
         **kwargs: Any,
     ) -> torch.Tensor:
         """Run the prediction head and return post-processed predictions.
@@ -230,9 +230,6 @@ class Hyformer(PretrainedMixin, nn.Module):
             )
         if self.prediction_task_type is None:
             raise ValueError("prediction_task_type must be set to use predict().")
-
-        if attention_mask is None:
-            attention_mask = torch.ones_like(input_ids, dtype=torch.long)
 
         logits = self.forward(
             input_ids=input_ids, attention_mask=attention_mask, task="prediction"
