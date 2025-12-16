@@ -67,7 +67,7 @@ def load_model(
         model.load_pretrained(model_ckpt, device=device)
         logger.info("Loaded model weights from checkpoint")
     else:
-        logger.info("Initialized new model from scratch")
+        logger.info("Initialized model from scratch")
 
     logger.info(f"Model parameters: {model.get_num_params(trainable_only=True):,}")
 

@@ -4,9 +4,8 @@
   "n_heads": 8,
   "n_layers": 8,
   "max_seq_len": 128,
-  "attn_dropout": 0.0,
-  "resid_dropout": 0.0,
-  "eps": 1e-6,
+  "attn_dropout_p": 0.0,
+  "rms_norm_eps": 1e-5,
   "generator_type": "unconditional"
 }
 

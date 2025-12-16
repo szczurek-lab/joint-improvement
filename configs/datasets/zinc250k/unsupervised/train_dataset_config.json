@@ -1,5 +1,5 @@
 {
-    "data_path": "data/processed/zinc250k/unsupervised/zinc_train.npz",
+    "data_path": "data/zinc250k/unsupervised/train.npz",
     "sequence_key": "sequence",
     "target_key": null,
     "transforms": null,

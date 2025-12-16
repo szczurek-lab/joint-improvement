@@ -49,6 +49,7 @@ class TrainerConfig(BaseConfig):
         Example: {"task_1": 1.0, "task_2": 0.5}.
     """
 
+    batch_size: int = 512
     learning_rate: float = 3e-4
     weight_decay: float = 0.1
     beta1: float = 0.9
@@ -64,7 +65,8 @@ class TrainerConfig(BaseConfig):
     log_every_n_iterations: int | None = None  # Log every N iterations. If None, log only at end of each epoch
     checkpoint_every_n_epochs: int | None = None  # Save checkpoint every N epochs. If None, only save best checkpoint
     tasks: dict[str, float] = field(default_factory=dict)
-
+    allow_tf32: bool = False
+    
     def __post_init__(self) -> None:
         if not self.tasks:
             raise ValueError("TrainerConfig.tasks cannot be empty; provide at least one task with task weight.")
@@ -113,9 +115,6 @@ class MultiTaskTrainer(TrainerCheckpointMixin):
         ) = setup_device_optimizations(config, device)
 
         if config.compile:
-            # Prefer dynamic shapes to avoid stride/assert mismatches when sequence length varies
-            # across batches (e.g., padding to batch max). Fall back if the torch version
-            # doesn't support the `dynamic` kwarg.
             try:
                 self.model = torch.compile(self.model, mode=compile_mode, dynamic=True)
             except TypeError:
