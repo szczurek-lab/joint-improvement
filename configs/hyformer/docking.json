@@ -4,11 +4,13 @@
   "n_heads": 8,
   "n_layers": 8,
   "max_seq_len": 128,
-  "attn_dropout": 0.0,
-  "resid_dropout": 0.0,
-  "eps": 1e-6,
+  "attn_dropout_p": 0.0,
+  "predictor_dropout_p": 0.0,
+  "predictor_head_depth": 2,
+  "predictor_head_act_fn": "gelu",
+  "rms_norm_eps": 1e-5,
   "num_prediction_tasks": 3,
   "prediction_task_type": "regression",
-  "generator_type": "unconditional"
+  "generator_type": "gumbeldore"
 }
 
