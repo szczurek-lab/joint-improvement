@@ -25,12 +25,14 @@ if (project_root := Path(__file__).parent.parent.parent) not in [
 
 from experiments.helpers import create_dataloader, load_model, load_tokenizer, load_trainer  # noqa: E402
 from experiments.offline_optimization.helpers import (  # noqa: E402
-    calculate_optimization_metrics,
-    calculate_regression_metrics,
     get_optimization_threshold,
     inverse_docking_target_transform,
     load_docking_dataset,
     save_solutions,
+)
+from experiments.offline_optimization.metrics import (  # noqa: E402
+    calculate_optimization_metrics,
+    calculate_regression_metrics,
 )
 from experiments.offline_optimization.sample import oracle_fn, sample_new_solutions  # noqa: E402
 from joint_improvement.utils import SequenceDataLoader, set_seed  # noqa: E402
@@ -138,6 +140,48 @@ def build_parser() -> argparse.ArgumentParser:
         default=0,
         help="Number of augmentation rounds (default: 0).",
     )
+    parser.add_argument(
+        "--temperature",
+        type=float,
+        default=1.0,
+        help="Temperature for sampling new solutions (default: 1.0).",
+    )
+    parser.add_argument(
+        "--top-k",
+        type=int,
+        default=25,
+        help="Top-k for sampling new solutions (default: 25).",
+    )
+    parser.add_argument(
+        "--beam-width",
+        type=int,
+        default=16,
+        help="Beam width for sampling new solutions (default: 16).",
+    )
+    parser.add_argument(
+        "--num-rounds",
+        type=int,
+        default=10,
+        help="Number of rounds for sampling new solutions (default: 10).",
+    )
+    parser.add_argument(
+        "--advantage-constant",
+        type=float,
+        default=1.0,
+        help="Advantage constant for sampling new solutions (default: 1.0).",
+    )
+    parser.add_argument(
+        "--normalize-advantage-value",
+        type=bool,
+        default=True,
+        help="Normalize advantage value for sampling new solutions (default: True).",
+    )
+    parser.add_argument(
+        "--min-nucleus-top-p",
+        type=float,
+        default=0.95,
+        help="Minimum nucleus top-p for sampling new solutions (default: 0.95).",
+    )
     return parser
 
 
@@ -157,21 +201,20 @@ def main() -> None:
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     solutions: list[str] = []
-    objective_values = []
-    docking_scores = []
     threshold = get_optimization_threshold(args.target)
 
-    # Load offline dataset and test dataset once before the optimization loop
+    # Load offline dataset, tokenizer and model
     offline_dataset = load_docking_dataset(
         args.train_dataset_config, config_dump_dir=args.output_dir
     )
     test_dataset = load_docking_dataset(
-        args.test_dataset_config, config_dump_dir=None  # no need to save test dataset config
+        args.test_dataset_config, config_dump_dir=None  # do not save test dataset config
     )
-
+    logger.info(f"Loaded {len(offline_dataset)} solutions from offline dataset")
+    
     tokenizer = load_tokenizer(
-            args.tokenizer_config, config_dump_dir=args.output_dir
-        )
+        args.tokenizer_config, config_dump_dir=args.output_dir
+    )
 
     model = load_model(
         args.model_config,
@@ -181,24 +224,21 @@ def main() -> None:
     )
 
     optimization_round: int = 0
-    while len(offline_dataset) < args.oracle_budget:
+    while len(solutions) < args.oracle_budget:
 
-        # 0. Log optimization round
         logger.info("-" * 100)
         logger.info(f"Optimization round {optimization_round} started...")
         logger.info("-" * 100)
 
-        # 1. Load pretrained tokenizer/model
-
+        # 1. Jointly update the model using the offline dataset
         trainer = load_trainer(
             args.trainer_config,
             model,
             args.device,
-            args.output_dir,
+            None, # do not save checkpoints
             config_dump_dir=args.output_dir,
         )
 
-        # 2. Jointly train model on offline dataset
         train_loaders: dict[str, SequenceDataLoader] = {}
         val_loaders: dict[str, SequenceDataLoader] = {}
 
@@ -221,10 +261,10 @@ def main() -> None:
                 device=args.device,
                 shuffle=False,
             )
-        model.train()
+        # trainer.train() will set model to train mode internally
         trainer.train(train_loaders=train_loaders, val_loaders=val_loaders)
 
-        # 3. Report test set predictive performance
+        # 3. Report the test set predictive performance of ds 
         outputs = trainer.test(dataloader=val_loaders["prediction"])
         y_true = outputs["true"][:, 0].detach().cpu().numpy()
         y_pred = outputs["predicted"][:, 0].detach().cpu().numpy()
@@ -239,56 +279,55 @@ def main() -> None:
             f"Optimization round {optimization_round} regression metrics: {regression_metrics}"
         )
 
-        # 4. Sample new solutions
-        model.eval()
-        oracle = partial(oracle_fn, tokenizer=tokenizer, target=args.target, model=model, model_device=args.device)
+        # 4. Sample new solutions from the model
+        # Use underlying_model for sampling to ensure consistency (compiled models may have issues with generation)
+        # The generator will automatically set the model to eval mode during sampling
+        sampling_model = trainer.underlying_model
+        oracle = partial(oracle_fn, tokenizer=tokenizer, target=args.target, model=sampling_model, model_device=args.device)
         _sampled_solutions = sample_new_solutions(
             tokenizer=tokenizer,
-            model=model,
+            model=sampling_model,
             advantage_fn=lambda x: x,
             oracle=oracle,
             device=args.device,
             num_samples=args.batch_size,
             max_sequence_length=args.max_length,
-            temperature=1.0,
-            top_k=25,
-            beam_width=16,
-            num_rounds=10,
-            advantage_constant=1.0,
-            normalize_advantage_value=True,
-            min_nucleus_top_p=0.95,
+            temperature=args.temperature,
+            top_k=args.top_k,
+            beam_width=args.beam_width,
+            num_rounds=args.num_rounds,
+            advantage_constant=args.advantage_constant,
+            normalize_advantage_value=args.normalize_advantage_value,
+            min_nucleus_top_p=args.min_nucleus_top_p,
         )
         logger.info(f"Sampled {len(_sampled_solutions)} solutions")
-
-        # 5. Oracle call and update offline dataset
-        _sampled_objective_values = oracle_call(list(_sampled_solutions), target=args.target)
         solutions.extend(_sampled_solutions)
-        docking_scores.extend(_sampled_objective_values[:, 0].tolist())
-        objective_values.extend(_sampled_objective_values.tolist())
+        
+        # 5. Add new solutions to the offline dataset
+        #offline_dataset.append(sequences=_sampled_solutions, targets=_sampled_objective_values.tolist())
 
-        # 6. Calculate optimization metrics
-        optimization_metrics = calculate_optimization_metrics(
-            solutions,
-            docking_scores,
-            threshold,
-            out_dir=args.output_dir,
-            optimization_round=optimization_round,
-        )
-        logger.info(f"Optimization round {optimization_round} optimization metrics: {optimization_metrics}")
-
-        # 7. Save solutions and objective values
-        save_solutions(
-            solutions,
-            objective_values,
-            out_dir=args.output_dir,
-            optimization_round=optimization_round,
-        )
-
-        # 8. Add new solutions to the offline dataset
-        offline_dataset.append(sequences=_sampled_solutions, targets=_sampled_objective_values.tolist())
-
-        # 9. Increment optimization round counter
-        optimization_round += 1
+        # 6. Increment optimization round counter
+        #optimization_round += 1
+    
+    # Evaluate the solutions using the oracle
+    if len(solutions) > args.oracle_budget:
+        solutions = solutions[-args.oracle_budget:]
+        assert len(solutions) == args.oracle_budget
+        
+    objective_function_values = oracle_call(solutions, target=args.target)
+    optimization_metrics = calculate_optimization_metrics(
+        solutions,
+        objective_function_values,
+        threshold,
+        out_dir=args.output_dir
+    )
+    
+    logger.info(f"Optimization metrics for offline optimization: {optimization_metrics}")
+    save_solutions(
+        solutions,
+        objective_function_values,
+        out_dir=args.output_dir
+    )
 
 
 if __name__ == "__main__":

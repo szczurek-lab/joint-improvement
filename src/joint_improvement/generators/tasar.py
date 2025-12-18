@@ -199,28 +199,39 @@ class TasarMixin(GeneratorMixin):
         -----
         Requires a `_get_model_logits` method to be implemented in the class.
         """
-        child_log_probability_fn = self._build_fn(self._child_log_probability_fn, temperature=temperature, top_k=top_k)
+        # Ensure model is in eval mode for inference
+        was_training = self.training
+        self.eval()
 
-        child_transition_fn = self._build_fn(
-            self._child_transition_fn,
-            max_sequence_length=max_sequence_length,
-            eos_token_id=eos_token_id,
-        )
+        try:
+            child_log_probability_fn = self._build_fn(self._child_log_probability_fn, temperature=temperature, top_k=top_k)
 
-        leaf_evaluation_fn = self._build_fn(self._leaf_evaluation_fn, advantage_fn=advantage_fn, oracle_fn=oracle_fn)
+            child_transition_fn = self._build_fn(
+                self._child_transition_fn,
+                max_sequence_length=max_sequence_length,
+                eos_token_id=eos_token_id,
+            )
 
-        _sampler = self._get_sampler(
-            initial_states=self._cast_to_states(prefix_input_ids.unsqueeze(0)),  # equivalent to batch size == 1
-            child_log_probability_fn=child_log_probability_fn,
-            child_transition_fn=child_transition_fn,
-            leaf_evaluation_fn=leaf_evaluation_fn,
-        )
+            leaf_evaluation_fn = self._build_fn(self._leaf_evaluation_fn, advantage_fn=advantage_fn, oracle_fn=oracle_fn)
 
-        result = _sampler.perform_tasar(
-            beam_width=beam_width, nucleus_top_p=nucleus_top_p, replan_steps=replan_steps, deterministic=deterministic
-        )
+            _sampler = self._get_sampler(
+                initial_states=self._cast_to_states(prefix_input_ids.unsqueeze(0)),  # equivalent to batch size == 1
+                child_log_probability_fn=child_log_probability_fn,
+                child_transition_fn=child_transition_fn,
+                leaf_evaluation_fn=leaf_evaluation_fn,
+            )
 
-        return self._cast_tasar_result(result)
+            result = _sampler.perform_tasar(
+                beam_width=beam_width, nucleus_top_p=nucleus_top_p, replan_steps=replan_steps, deterministic=deterministic
+            )
+
+            generated = self._cast_tasar_result(result)
+
+            return generated
+        finally:
+            # Restore original training mode
+            if was_training:
+                self.train()
 
     def _cast_tasar_result(self, result: list[list[BeamLeaf]]) -> list[list[State]]:
         output_result = result[0]

@@ -167,38 +167,49 @@ class GumbeldoreMixin(GeneratorMixin):
         -----
         Requires a `_get_model_logits` method to be implemented in the class.
         """
-        child_log_probability_fn = self._build_fn(self._child_log_probability_fn, temperature=temperature, top_k=top_k)
+        # Ensure model is in eval mode for inference
+        was_training = self.training
+        self.eval()
 
-        child_transition_fn = self._build_fn(
-            self._child_transition_fn,
-            max_sequence_length=max_sequence_length,
-            eos_token_id=eos_token_id,
-        )
+        try:
+            child_log_probability_fn = self._build_fn(self._child_log_probability_fn, temperature=temperature, top_k=top_k)
 
-        leaf_evaluation_fn = self._build_fn(self._leaf_evaluation_fn, advantage_fn=advantage_fn, oracle_fn=oracle_fn)
+            child_transition_fn = self._build_fn(
+                self._child_transition_fn,
+                max_sequence_length=max_sequence_length,
+                eos_token_id=eos_token_id,
+            )
 
-        _sampler = self._get_sampler(
-            initial_states=self._cast_to_states(prefix_input_ids.unsqueeze(0)),  # equivalent to batch size == 1
-            child_log_probability_fn=child_log_probability_fn,
-            child_transition_fn=child_transition_fn,
-            leaf_evaluation_fn=leaf_evaluation_fn,
-        )
+            leaf_evaluation_fn = self._build_fn(self._leaf_evaluation_fn, advantage_fn=advantage_fn, oracle_fn=oracle_fn)
 
-        result = _sampler.perform_incremental_sbs(
-            beam_width=beam_width,
-            num_rounds=num_rounds,
-            log_prob_update_type="gumbeldore",
-            advantage_constant=advantage_constant,
-            min_max_normalize_advantage=normalize_advantage_value,
-            expected_value_use_simple_mean=False,
-            use_pure_outcomes=False,
-            normalize_advantage_by_visit_count=False,
-            perform_first_round_deterministic=False,
-            min_nucleus_top_p=min_nucleus_top_p,
-            return_round_info=False,
-        )
+            _sampler = self._get_sampler(
+                initial_states=self._cast_to_states(prefix_input_ids.unsqueeze(0)),  # equivalent to batch size == 1
+                child_log_probability_fn=child_log_probability_fn,
+                child_transition_fn=child_transition_fn,
+                leaf_evaluation_fn=leaf_evaluation_fn,
+            )
 
-        return self._cast_incremental_sbs_result(result)
+            result = _sampler.perform_incremental_sbs(
+                beam_width=beam_width,
+                num_rounds=num_rounds,
+                log_prob_update_type="gumbeldore",
+                advantage_constant=advantage_constant,
+                min_max_normalize_advantage=normalize_advantage_value,
+                expected_value_use_simple_mean=False,
+                use_pure_outcomes=False,
+                normalize_advantage_by_visit_count=False,
+                perform_first_round_deterministic=False,
+                min_nucleus_top_p=min_nucleus_top_p,
+                return_round_info=False,
+            )
+
+            generated = self._cast_incremental_sbs_result(result)
+
+            return generated
+        finally:
+            # Restore original training mode
+            if was_training:
+                self.train()
 
     def _cast_incremental_sbs_result(self, result: list[list[BeamLeaf]]) -> list[list[State]]:
         output_result = result[0]

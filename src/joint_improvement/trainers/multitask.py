@@ -120,6 +120,9 @@ class MultiTaskTrainer(TrainerCheckpointMixin):
             compile_mode,
         ) = setup_device_optimizations(config, device)
 
+        # Store underlying model before compilation
+        self.underlying_model = self.model
+
         if config.compile:
             try:
                 self.model = torch.compile(self.model, mode=compile_mode, dynamic=True)
