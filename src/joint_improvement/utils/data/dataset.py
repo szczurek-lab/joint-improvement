@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -10,7 +11,7 @@ from torch.utils.data import Dataset
 from joint_improvement.utils.config import BaseConfig
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable
 
 
 @dataclass
@@ -145,7 +146,7 @@ class SequenceDataset(Dataset):
 
         if target is not None and self.target_transforms is not None:
             for target_transform in self.target_transforms:
-                target = target_transform(target)  # type: ignore[assignment, arg-type]
+                target = target_transform(target)
 
         if target is None:
             return {
@@ -196,10 +197,15 @@ class SequenceDataset(Dataset):
             assert len(new_sequences) == len(
                 new_targets
             ), "`sequences` and `targets` must have the same length."
-            assert len(new_targets[0]) == len(
-                self._targets[0]
-            ), "`targets` must have the same shape as the existing targets."
-            self._targets.extend(new_targets)
+            # Check if targets are sequences (multi-target case)
+            if new_targets and isinstance(new_targets[0], Sequence):
+                assert isinstance(
+                    self._targets[0], Sequence
+                ), "Cannot mix scalar and sequence targets."
+                assert len(new_targets[0]) == len(
+                    self._targets[0]
+                ), "`targets` must have the same shape as the existing targets."
+            self._targets.extend(new_targets)  # type: ignore[arg-type]
 
     @classmethod
     def from_config(
