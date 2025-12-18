@@ -62,14 +62,20 @@ class TrainerConfig(BaseConfig):
     dtype: str = "bfloat16"
     compile: bool = False
     patience: int | None = None  # Early stopping patience (None = no early stopping)
-    log_every_n_iterations: int | None = None  # Log every N iterations. If None, log only at end of each epoch
-    checkpoint_every_n_epochs: int | None = None  # Save checkpoint every N epochs. If None, only save best checkpoint
+    log_every_n_iterations: int | None = (
+        None  # Log every N iterations. If None, log only at end of each epoch
+    )
+    checkpoint_every_n_epochs: int | None = (
+        None  # Save checkpoint every N epochs. If None, only save best checkpoint
+    )
     tasks: dict[str, float] = field(default_factory=dict)
     allow_tf32: bool = False
-    
+
     def __post_init__(self) -> None:
         if not self.tasks:
-            raise ValueError("TrainerConfig.tasks cannot be empty; provide at least one task with task weight.")
+            raise ValueError(
+                "TrainerConfig.tasks cannot be empty; provide at least one task with task weight."
+            )
 
 
 class MultiTaskTrainer(TrainerCheckpointMixin):
@@ -142,7 +148,12 @@ class MultiTaskTrainer(TrainerCheckpointMixin):
         for n, p in self.model.named_parameters():
             if p.requires_grad:
                 # Parameters with fewer than 2 dimensions (bias, scale) or LayerNorm don't decay
-                if p.ndim < 2 or "bias" in n.lower() or "layernorm" in n.lower() or "layer_norm" in n.lower():
+                if (
+                    p.ndim < 2
+                    or "bias" in n.lower()
+                    or "layernorm" in n.lower()
+                    or "layer_norm" in n.lower()
+                ):
                     no_decay_params.append(p)
                 else:
                     decay_params.append(p)
@@ -176,7 +187,11 @@ class MultiTaskTrainer(TrainerCheckpointMixin):
 
         # Warmup phase
         if current_iter < self.state.warmup_iters:
-            return self.config.learning_rate * (current_iter + 1) / max(self.state.warmup_iters, 1)
+            return (
+                self.config.learning_rate
+                * (current_iter + 1)
+                / max(self.state.warmup_iters, 1)
+            )
 
         # Cosine decay phase
         if current_iter >= self.state.total_iters:
@@ -188,7 +203,9 @@ class MultiTaskTrainer(TrainerCheckpointMixin):
 
         decay_ratio = (current_iter - self.state.warmup_iters) / decay_iters
         coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))
-        return self.config.min_lr + coeff * (self.config.learning_rate - self.config.min_lr)
+        return self.config.min_lr + coeff * (
+            self.config.learning_rate - self.config.min_lr
+        )
 
     def _update_lr(self, current_iter: int) -> None:
         """Update learning rate for current iteration.
@@ -227,7 +244,9 @@ class MultiTaskTrainer(TrainerCheckpointMixin):
             outputs = self.model(**batch.to(self.device))
             loss = outputs.loss
             if loss is None:
-                raise ValueError("Model returned None loss. Ensure targets/labels are provided in the input.")
+                raise ValueError(
+                    "Model returned None loss. Ensure targets/labels are provided in the input."
+                )
 
         self.scaler.scale(loss).backward()
         self.scaler.unscale_(self.optimizer)
@@ -237,7 +256,11 @@ class MultiTaskTrainer(TrainerCheckpointMixin):
         self.scaler.step(self.optimizer)
         self.scaler.update()
 
-        return loss.item(), grad_norm.item() if isinstance(grad_norm, torch.Tensor) else grad_norm, num_tokens
+        return (
+            loss.item(),
+            grad_norm.item() if isinstance(grad_norm, torch.Tensor) else grad_norm,
+            num_tokens,
+        )
 
     def _get_next_batch(
         self,
@@ -258,10 +281,14 @@ class MultiTaskTrainer(TrainerCheckpointMixin):
         with self.ctx:
             outputs = self.model(**batch.to(self.device))
             if outputs.loss is None:
-                raise ValueError("Model output loss is None; ensure labels/targets are provided.")
+                raise ValueError(
+                    "Model output loss is None; ensure labels/targets are provided."
+                )
             return outputs.loss.item()
 
-    def _save_evaluation_losses_json(self, task_losses: dict[str, float], weighted_loss: float) -> None:
+    def _save_evaluation_losses_json(
+        self, task_losses: dict[str, float], weighted_loss: float
+    ) -> None:
         """Save evaluation losses to JSON file.
 
         Parameters
@@ -283,7 +310,9 @@ class MultiTaskTrainer(TrainerCheckpointMixin):
                 with eval_file.open() as f:
                     evaluation_history = json.load(f)
             except (json.JSONDecodeError, OSError) as e:
-                logger.warning(f"Failed to load existing evaluation losses from {eval_file}: {e}")
+                logger.warning(
+                    f"Failed to load existing evaluation losses from {eval_file}: {e}"
+                )
 
         # Create entry for current epoch
         epoch_key = f"epoch_{self.state.epoch}"
@@ -301,7 +330,9 @@ class MultiTaskTrainer(TrainerCheckpointMixin):
             logger.warning(f"Failed to save evaluation losses to {eval_file}: {e}")
 
     @torch.inference_mode()
-    def evaluate(self, val_loaders: dict[str, DataLoader]) -> tuple[dict[str, float], float]:
+    def evaluate(
+        self, val_loaders: dict[str, DataLoader]
+    ) -> tuple[dict[str, float], float]:
         """Evaluate model."""
         was_training = self.model.training
         self.model.eval()
@@ -318,14 +349,22 @@ class MultiTaskTrainer(TrainerCheckpointMixin):
         for task_name, val_loader in val_loaders.items():
             losses = [self.evaluate_step(batch) for batch in val_loader]
             losses = [loss for loss in losses if loss is not None]
-            task_losses[task_name] = sum(losses) / len(losses) if losses else float("inf")
+            task_losses[task_name] = (
+                sum(losses) / len(losses) if losses else float("inf")
+            )
 
         weighted_val_loss = (
-            sum(task_probs.get(task, 0.0) * loss for task, loss in task_losses.items()) if task_losses else float("inf")
+            sum(task_probs.get(task, 0.0) * loss for task, loss in task_losses.items())
+            if task_losses
+            else float("inf")
         )
 
-        per_task_str = ", ".join(f"{task}: {loss:.4f}" for task, loss in task_losses.items())
-        logger.info(f"Eval epoch {self.state.epoch}: loss {weighted_val_loss:.4f}, per_task [{per_task_str}]")
+        per_task_str = ", ".join(
+            f"{task}: {loss:.4f}" for task, loss in task_losses.items()
+        )
+        logger.info(
+            f"Eval epoch {self.state.epoch}: loss {weighted_val_loss:.4f}, per_task [{per_task_str}]"
+        )
 
         # Save evaluation losses to JSON
         self._save_evaluation_losses_json(task_losses, weighted_val_loss)
@@ -335,32 +374,70 @@ class MultiTaskTrainer(TrainerCheckpointMixin):
         return task_losses, weighted_val_loss
 
     @torch.inference_mode()
-    def test(self, dataloader: DataLoader) -> torch.Tensor:
-        """Run the model over a single-task dataloader and return concatenated logits."""
+    def test(self, dataloader: DataLoader) -> tuple[torch.Tensor, torch.Tensor]:
+        """Run the model over a single-task dataloader and return concatenated logits and true values."""
         was_training = self.model.training
         self.model.eval()
 
         logits_chunks: list[torch.Tensor] = []
+        true_chunks: list[torch.Tensor] = []
         for batch in tqdm(dataloader, desc="Testing", leave=False):
+            batch_device = batch.to(self.device)
             with self.ctx:
-                outputs = self.model(**batch.to(self.device))
+                outputs = self.model(
+                    input_ids=batch_device.input_ids,
+                    attention_mask=batch_device.attention_mask,
+                    task=batch_device.task,
+                )
             logits_chunks.append(outputs.logits.detach().float().to(device="cpu"))
+
+            # Collect true values (prefer targets over labels)
+            true_values = (
+                batch_device.targets
+                if batch_device.targets is not None
+                else batch_device.labels
+            )
+            if true_values is not None:
+                true_chunks.append(true_values.detach().float().to(device="cpu"))
 
         if was_training:
             self.model.train()
 
         if not logits_chunks:
-            return torch.empty((0,), dtype=torch.float32)
-        return torch.cat(logits_chunks, dim=0)
+            return torch.empty((0,), dtype=torch.float32), torch.empty(
+                (0,), dtype=torch.float32
+            )
 
-    def _infer_total_num_iters(self, train_loaders: dict[str, DataLoader]) -> tuple[int, int]:
+        predicted = torch.cat(logits_chunks, dim=0)
+        true = (
+            torch.cat(true_chunks, dim=0)
+            if true_chunks
+            else torch.empty((0,), dtype=torch.float32)
+        )
+        return {"predicted": predicted, "true": true}
+
+    def _infer_total_num_iters(
+        self, train_loaders: dict[str, DataLoader]
+    ) -> tuple[int, int]:
         """Calculate total iterations: batches_per_epoch = Σ(prob_i × length_i)."""
         task_names = list(train_loaders.keys())
         task_probs = self.task_sampler.get_task_probs(task_names)
-        batches_per_epoch = max(1, round(sum(task_probs[task] * len(loader) for task, loader in train_loaders.items())))
+        batches_per_epoch = max(
+            1,
+            round(
+                sum(
+                    task_probs[task] * len(loader)
+                    for task, loader in train_loaders.items()
+                )
+            ),
+        )
         return self.config.max_epochs * batches_per_epoch, batches_per_epoch
 
-    def train(self, train_loaders: dict[str, DataLoader], val_loaders: dict[str, DataLoader] | None = None) -> None:
+    def train(
+        self,
+        train_loaders: dict[str, DataLoader],
+        val_loaders: dict[str, DataLoader] | None = None,
+    ) -> None:
         """Training loop for multitask learning.
 
         Tasks are sampled according to config.tasks weights.
@@ -378,7 +455,9 @@ class MultiTaskTrainer(TrainerCheckpointMixin):
             )
 
         # Infer total iterations using sampler's normalized probabilities
-        self.state.total_iters, batches_per_epoch = self._infer_total_num_iters(train_loaders)
+        self.state.total_iters, batches_per_epoch = self._infer_total_num_iters(
+            train_loaders
+        )
         self.state.warmup_iters = int(self.config.warmup_ratio * self.state.total_iters)
 
         # Initialize training state
@@ -397,7 +476,9 @@ class MultiTaskTrainer(TrainerCheckpointMixin):
             batches_in_epoch = 0
 
             # Initialize iterators for each task's loader (reset at start of each epoch)
-            self.task_iterators = {task: iter(train_loaders[task]) for task in task_names}
+            self.task_iterators = {
+                task: iter(train_loaders[task]) for task in task_names
+            }
 
             # Sample tasks and train for one epoch
             while batches_in_epoch < batches_per_epoch:
@@ -424,7 +505,10 @@ class MultiTaskTrainer(TrainerCheckpointMixin):
                 should_log = (
                     self.config.log_every_n_iterations is not None
                     and global_iter % self.config.log_every_n_iterations == 0
-                ) or (self.config.log_every_n_iterations is None and batches_in_epoch == batches_per_epoch)
+                ) or (
+                    self.config.log_every_n_iterations is None
+                    and batches_in_epoch == batches_per_epoch
+                )
                 if should_log:
                     elapsed = time.time() - log_start_time
                     tokens_per_sec = log_tokens / elapsed if elapsed > 0 else 0.0
@@ -449,12 +533,18 @@ class MultiTaskTrainer(TrainerCheckpointMixin):
                     self.state.best_epoch = self.state.epoch
                     if self.out_dir:
                         # Save trainer checkpoint (optimizer + trainer state)
-                        best_trainer_path = self.out_dir / self.BEST_CHECKPOINT_FILE_NAME
+                        best_trainer_path = (
+                            self.out_dir / self.BEST_CHECKPOINT_FILE_NAME
+                        )
                         self.save_trainer_checkpoint(best_trainer_path)
                         # Update best model checkpoint (only when it's actually the best)
-                        self.model.save_pretrained(self.out_dir / self.BEST_MODEL_CHECKPOINT_FILE_NAME)
+                        self.model.save_pretrained(
+                            self.out_dir / self.BEST_MODEL_CHECKPOINT_FILE_NAME
+                        )
                     not_improved = 0
-                    logger.info(f"New best weighted validation loss: {self.state.best_val_loss:.4f}")
+                    logger.info(
+                        f"New best weighted validation loss: {self.state.best_val_loss:.4f}"
+                    )
                 else:
                     not_improved += 1
 
@@ -470,10 +560,14 @@ class MultiTaskTrainer(TrainerCheckpointMixin):
                 and self.state.epoch % self.config.checkpoint_every_n_epochs == 0
             ):
                 # Save trainer checkpoint
-                ckpt_path = self.out_dir / self.CHECKPOINT_EPOCH_FILE_PATTERN.format(epoch=self.state.epoch)
+                ckpt_path = self.out_dir / self.CHECKPOINT_EPOCH_FILE_PATTERN.format(
+                    epoch=self.state.epoch
+                )
                 self.save_trainer_checkpoint(ckpt_path)
                 # Save model checkpoint
-                model_path = self.out_dir / self.MODEL_EPOCH_FILE_PATTERN.format(epoch=self.state.epoch)
+                model_path = self.out_dir / self.MODEL_EPOCH_FILE_PATTERN.format(
+                    epoch=self.state.epoch
+                )
                 self.model.save_pretrained(model_path)
 
             self.state.epoch += 1
@@ -482,4 +576,6 @@ class MultiTaskTrainer(TrainerCheckpointMixin):
         if val_loaders and self.out_dir:
             best_model_path = self.out_dir / self.BEST_MODEL_CHECKPOINT_FILE_NAME
             if best_model_path.exists():
-                self.model.load_pretrained(best_model_path, device=self.device, strict=True)
+                self.model.load_pretrained(
+                    best_model_path, device=self.device, strict=True
+                )
