@@ -33,7 +33,7 @@ except ImportError as e:
 
 
 # Docking score thresholds for each target (lower scores indicate better binding)
-TARGET_DOCKING_THRESHOLDS: dict[str, float] = {
+DOCKING_THRESHOLDS: dict[str, float] = {
     "braf": -10.3,
     "parp1": -10.0,
     "fa7": -8.5,

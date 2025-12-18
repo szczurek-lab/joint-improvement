@@ -21,9 +21,10 @@ def test_lm_collator_basic():
     dataset = SequenceDataset(sequences=sequences, targets=targets)
 
     # Create dataloader
+    collator = LMCollator(tokenizer)
     lm_loader = SequenceDataLoader(
         dataset=dataset,
-        collator=LMCollator(tokenizer),
+        collator=collator,
         batch_size=2,
         shuffle=True,
     )
@@ -33,14 +34,41 @@ def test_lm_collator_basic():
 
     # Assertions
     assert isinstance(batch, ModelInput)
+    prefix_input_ids = torch.tensor(
+        [66, 62, 15, 15, 1, 13, 20, 2, 20, 58, 5, 58, 58, 58, 58, 58, 5, 15, 1, 13, 20, 2, 20, 63],
+        dtype=torch.long,
+    )
+    pad_to_length = ((collator.max_length + 31) // 32) * 32
+    expected_input_ids = torch.cat(
+        [
+            prefix_input_ids,
+            torch.full(
+                (pad_to_length - prefix_input_ids.numel(),),
+                tokenizer.pad_token_id,
+                dtype=torch.long,
+            ),
+        ]
+    )
     assert torch.equal(
         batch["input_ids"][0],
-        torch.tensor([66, 62, 15, 15, 1, 13, 20, 2, 20, 58, 5, 58, 58, 58, 58, 58, 5, 15, 1, 13, 20, 2, 20, 63]),
+        expected_input_ids,
+    )
+    expected_attention_mask = torch.cat(
+        [
+            torch.ones(prefix_input_ids.numel(), dtype=torch.long),
+            torch.zeros(pad_to_length - prefix_input_ids.numel(), dtype=torch.long),
+        ]
     )
     assert torch.equal(
         batch["attention_mask"][0],
-        torch.tensor([1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]),
+        expected_attention_mask,
     )
     assert batch["task"] == "lm"
     assert batch["targets"] is None
-    assert torch.equal(batch["labels"][0], batch["input_ids"][0])
+    # Labels: task token + padding must be ignored (-100)
+    assert batch["labels"] is not None
+    assert batch["labels"].shape == batch["input_ids"].shape
+    assert batch["labels"][0, 0].item() == -100
+    pad_positions = batch["attention_mask"][0] == 0
+    if pad_positions.any():
+        assert (batch["labels"][0][pad_positions] == -100).all()

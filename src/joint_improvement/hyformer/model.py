@@ -5,9 +5,8 @@ import torch
 from torch import nn
 
 from .config import HyformerConfig
-from .layers.kv_cache import KVCache
 from .layers.prediction_head import PredictionHeadModule
-from .layers.transformer_layer import TransformerBlock
+from .layers.transformer_layer import TransformerLayer
 from .losses import compute_lm_loss, compute_mlm_loss, compute_prediction_loss
 from .outputs import ModelOutput
 from .pretrained import PretrainedMixin
@@ -48,22 +47,6 @@ class Hyformer(PretrainedMixin, nn.Module):
         The "prediction" head is a PredictionHeadModule following DINOv2 best practices
         (LayerNorm, dropout, classifier) and uses the CLS token representation.
 
-    Notes
-    -----
-    The model uses weight tying between the embedding and language modeling head,
-    which reduces the number of parameters and can improve performance.
-
-    The forward pass processes input tokens through:
-        1. Token embeddings
-        2. Stack of transformer blocks (with optional KV caching)
-        3. Final layer normalization
-
-    The model supports both causal (autoregressive) and bidirectional attention
-    modes, controlled by the `is_causal` parameter in the forward pass.
-
-    The model includes UnconditionalGeneratorMixin by default, providing standard
-    autoregressive generation methods (greedy, top-k, top-p, temperature sampling)
-    via the `generate()` method.
     """
 
     def __init__(
@@ -73,55 +56,63 @@ class Hyformer(PretrainedMixin, nn.Module):
         n_heads: int,
         n_layers: int,
         max_seq_len: int,
+        attn_dropout_p: float = 0.0,
+        rms_norm_eps: float = 1e-5,
         num_prediction_tasks: int | None = None,
-        attn_dropout: float = 0.0,
-        resid_dropout: float = 0.0,
-        eps: float = 1e-6,
+        prediction_task_type: str | None = None,
+        predictor_dropout_p: float = 0.0,
+        predictor_head_depth: int = 1,
+        predictor_head_act_fn: str = "gelu",
+        generator_type: str | None = None,
     ) -> None:
         super().__init__()
         self.vocab_size = vocab_size
         self.num_prediction_tasks = num_prediction_tasks
+        self.prediction_task_type = prediction_task_type
+        self.generator_type = generator_type
 
         self.embed = nn.Embedding(vocab_size, d_model)
-        self.blocks = nn.ModuleList(
+        self.layers = nn.ModuleList(
             [
-                TransformerBlock(
+                TransformerLayer(
                     d_model=d_model,
                     n_heads=n_heads,
                     max_seq_len=max_seq_len,
-                    attn_dropout=attn_dropout,
-                    resid_dropout=resid_dropout,
-                    eps=eps,
+                    attn_dropout_p=attn_dropout_p,
+                    rms_norm_eps=rms_norm_eps,
                 )
                 for _ in range(n_layers)
             ]
         )
-        self.final_norm = nn.LayerNorm(d_model, eps=eps)
+        self.norm = nn.RMSNorm(d_model, eps=rms_norm_eps)
         self.heads = nn.ModuleDict(
-            {"lm": nn.Linear(d_model, vocab_size, bias=False), "mlm": nn.Linear(d_model, vocab_size, bias=False)}
+            {
+                "lm": nn.Linear(d_model, vocab_size, bias=False),
+                "mlm": nn.Linear(d_model, vocab_size, bias=False),
+            }
         )
         # Weight tying: both heads share embedding weights
         self.heads["lm"].weight = self.embed.weight
         self.heads["mlm"].weight = self.embed.weight
 
-        if num_prediction_tasks is not None:
+        if num_prediction_tasks is not None and prediction_task_type is not None:
             self.heads["prediction"] = PredictionHeadModule(
                 d_model=d_model,
-                num_labels=num_prediction_tasks,
-                dropout=0.1,
+                num_targets=num_prediction_tasks,
+                predictor_dropout_p=predictor_dropout_p,
+                predictor_head_depth=predictor_head_depth,
+                predictor_head_act_fn=predictor_head_act_fn,
             )
 
-        # Apply LLaMA-specific weight initialization
-        self._apply_llama_init()
+        self._init_weights()
 
     def forward(
         self,
         input_ids: torch.Tensor,
         task: str,
         attention_mask: torch.Tensor | None = None,
-        kv_caches: list[KVCache | None] | None = None,
-        use_cache: bool = False,
         labels: torch.Tensor | None = None,
+        targets: torch.Tensor | None = None
     ) -> ModelOutput:
         """
         Forward pass through the model.
@@ -137,6 +128,10 @@ class Hyformer(PretrainedMixin, nn.Module):
         attention_mask : Optional[torch.Tensor], default=None
             Padding mask tensor of shape [B, T] where 1 indicates valid tokens
             and 0 indicates padding. Used to create attention mask for bidirectional tasks.
+        labels : Optional[torch.Tensor], default=None
+            Labels for LM/MLM tasks. Used for computing loss for language modeling tasks.
+        targets : Optional[torch.Tensor], default=None
+            Targets for prediction/regression tasks. Required for computing loss for prediction tasks.
         kv_caches : Optional[list[Optional[KVCache]]], default=None
             Optional list of key-value caches, one per decoder block.
             If None and use_cache=True, will be initialized as None for
@@ -144,8 +139,6 @@ class Hyformer(PretrainedMixin, nn.Module):
         use_cache : bool, default=False
             Whether to use and update key-value caches for autoregressive
             generation.
-        labels : Optional[torch.Tensor], default=None
-            Optional labels for computing loss. If provided, loss will be computed.
 
         Returns
         -------
@@ -153,74 +146,59 @@ class Hyformer(PretrainedMixin, nn.Module):
             Model output containing:
             - logits: Tensor of shape [B, T, vocab_size] for LM/MLM tasks,
                      or [B, num_prediction_tasks] for prediction tasks
-            - loss: Optional loss tensor if labels provided
-            - extras: Dict containing hidden_states and kv_caches
+            - loss: Optional loss tensor if labels/targets provided
 
-        Notes
-        -----
-        For prediction tasks, the model extracts the CLS token (first token) from
-        the hidden states and passes it through the PredictionHeadModule, which
-        applies LayerNorm, dropout, and classification following DINOv2 best practices.
         """
         if task not in self.heads:
-            raise ValueError(f"Unknown task '{task}'. Available heads: {list(self.heads.keys())}")
-
-        is_causal = task == "lm"
-
-        B, T = input_ids.shape
-        x = self.embed(input_ids)
-
-        if kv_caches is None:
-            kv_caches = [None] * len(self.blocks)
-
-        # Build attention mask for bidirectional attention
-        if is_causal:
-            attn_mask = None
-        else:
-            if attention_mask is None:
-                attn_mask = None
-            else:
-                # Convert [B, T] padding mask (1=keep, 0=pad) -> SDPA bool mask [B, 1, 1, T] (True=mask)
-                attn_mask = (attention_mask == 0).unsqueeze(1).unsqueeze(2)
-
-        for i, block in enumerate(self.blocks):
-            x, kv_caches[i] = block(
-                x,
-                attn_mask=attn_mask,
-                kv_cache=kv_caches[i],
-                use_cache=use_cache,
-                is_causal=is_causal,
+            raise ValueError(
+                f"Unknown task '{task}'. Available heads: {list(self.heads.keys())}"
             )
 
-        x = self.final_norm(x)
+        B, T = input_ids.shape
+        is_causal = task == "lm"
 
-        # Compute logits from task-specific head
+        x = self.embed(input_ids)
+        for _, layer in enumerate(self.layers):
+            x = layer(x, is_causal=is_causal, attn_mask=None if is_causal else attention_mask)
+        x = self.norm(x)
+
         if task == "prediction":
-            # For prediction tasks, use CLS token (first token) - DINOv2 best practice
-            # Ensure contiguous tensor to avoid compilation issues when switching tasks
-            pooled = x[:, 0, :].contiguous()  # [B, d_model]
-            logits = self.heads[task](pooled)  # [B, num_labels]
+            pooled = x[:, 0, :]
+            logits = self.heads[task](
+                pooled
+            )
         else:
-            # For LM/MLM tasks, use full sequence
-            # Ensure contiguous tensor for consistent compilation behavior
-            logits = self.heads[task](x.contiguous())  # [B, T, vocab_size]
+            logits = self.heads[task](
+                x
+            )
 
-        # Compute loss if labels provided
+        # Compute loss if labels/targets provided
         loss = None
-        if labels is not None:
+        if task == "prediction":
+            if targets is not None:
+                if self.num_prediction_tasks is None:
+                    raise ValueError(
+                        "num_prediction_tasks must be set for prediction task"
+                    )
+                if self.prediction_task_type is None:
+                    raise ValueError(
+                        "prediction_task_type must be set for prediction task "
+                    )
+                loss = compute_prediction_loss(
+                    logits,
+                    targets,
+                    ignore_index=-1,
+                    reduction="mean",
+                    prediction_task_type=self.prediction_task_type,
+                )
+        elif labels is not None:
             if task == "lm":
                 loss = compute_lm_loss(logits, labels, shift_labels=is_causal)
             elif task == "mlm":
                 loss = compute_mlm_loss(logits, labels)
-            elif task == "prediction":
-                if self.num_prediction_tasks is None:
-                    raise ValueError("num_prediction_tasks must be set for prediction task")
-                loss = compute_prediction_loss(logits, labels, num_labels=self.num_prediction_tasks)
 
-        # Store hidden states and kv_caches in extras
         extras = {
             "hidden_states": x,
-            "kv_caches": kv_caches,
         }
 
         return ModelOutput(
@@ -229,25 +207,47 @@ class Hyformer(PretrainedMixin, nn.Module):
             extras=extras,
         )
 
-    def _apply_llama_init(self) -> None:
-        """Apply LLaMA-specific weight initialization.
+    @torch.inference_mode()
+    def predict(
+        self,
+        input_ids: torch.Tensor,
+        attention_mask: torch.Tensor
+    ) -> torch.Tensor:
+        """Run the prediction head and return post-processed predictions.
 
-        Initialization scheme following LLaMA:
-        - Embeddings: Normal(0, 0.02)
-        - Linear layers: Normal(0, 0.02)
-        - RMSNorm weights: Already initialized to ones (default in RMSNorm)
-        - LayerNorm: Default PyTorch initialization (already applied)
-
-        Note: Since the "lm" and "mlm" heads are weight-tied to embed.weight,
-        initializing embed.weight also initializes those heads automatically.
+        Returns
+        -------
+        torch.Tensor
+            - regression: raw logits of shape [B, num_prediction_tasks]
+            - binary_classification / multilabel_classification: sigmoid(logits)
         """
-        # Initialize embeddings with normal distribution (std=0.02)
-        # This also initializes weight-tied heads ("lm" and "mlm") since they share weights
+        if "prediction" not in self.heads:
+            raise ValueError(
+                "Prediction head is not enabled (missing heads['prediction'])."
+            )
+        if self.prediction_task_type is None:
+            raise ValueError("prediction_task_type must be set to use predict().")
+
+        logits = self.forward(
+            input_ids=input_ids, attention_mask=attention_mask, task="prediction"
+        ).logits
+
+        if self.prediction_task_type == "regression":
+            return logits
+        if self.prediction_task_type in (
+            "binary_classification",
+            "multilabel_classification",
+        ):
+            return torch.sigmoid(logits)
+        raise ValueError(
+            "prediction_task_type must be one of "
+            "'regression', 'binary_classification', 'multilabel_classification'."
+        )
+
+    def _init_weights(self) -> None:
+
         nn.init.normal_(self.embed.weight, mean=0.0, std=0.02)
 
-        # Initialize all other linear layers with normal distribution
-        # Skip weight-tied heads (already initialized via embed.weight)
-        # Skip prediction head classifier (initialized by PredictionHeadModule._init_weights())
         tied_heads = {self.heads["lm"], self.heads["mlm"]}
         prediction_head_classifier = None
         if hasattr(self, "heads") and "prediction" in self.heads:
@@ -315,12 +315,17 @@ class Hyformer(PretrainedMixin, nn.Module):
             "n_heads": int(config_dict["n_heads"]),
             "n_layers": int(config_dict["n_layers"]),
             "max_seq_len": int(config_dict["max_seq_len"]),
-            "num_prediction_tasks": int(config_dict["num_prediction_tasks"])
-            if config_dict.get("num_prediction_tasks") is not None
-            else None,
-            "attn_dropout": config_dict.get("attn_dropout", 0.0),
-            "resid_dropout": config_dict.get("resid_dropout", 0.0),
-            "eps": config_dict.get("eps", 1e-6),
+            "attn_dropout_p": float(config_dict["attn_dropout_p"]),
+            "rms_norm_eps": float(config_dict["rms_norm_eps"]),
+            "num_prediction_tasks": (
+                int(config_dict["num_prediction_tasks"])
+                if config_dict.get("num_prediction_tasks") is not None
+                else None
+            ),
+            "prediction_task_type": config_dict.get("prediction_task_type"),
+            "predictor_dropout_p": float(config_dict["predictor_dropout_p"]),
+            "predictor_head_depth": int(config_dict["predictor_head_depth"]),
+            "predictor_head_act_fn": config_dict["predictor_head_act_fn"],
         }
         if generator_type == "unconditional":
             from joint_improvement.generators import UnconditionalGeneratorMixin
@@ -336,6 +341,12 @@ class Hyformer(PretrainedMixin, nn.Module):
             from joint_improvement.generators import TasarMixinLegacy
 
             HyformerClass = type("Hyformer", (TasarMixinLegacy, cls), {})
+            return HyformerClass(**init_kwargs)
+
+        elif generator_type == "gumbeldore":
+            from joint_improvement.generators import GumbeldoreMixin
+
+            HyformerClass = type("Hyformer", (GumbeldoreMixin, cls), {})
             return HyformerClass(**init_kwargs)
         else:
             raise ValueError(

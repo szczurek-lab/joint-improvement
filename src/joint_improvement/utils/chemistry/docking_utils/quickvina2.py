@@ -29,6 +29,11 @@ except ImportError:
     pybel = None
 
 
+def _is_verbose() -> bool:
+    """Return True if docking subprocesses should print debug output."""
+    return os.environ.get("DOCKING_VERBOSE", "0") in {"1", "true", "True", "yes", "YES"}
+
+
 class DockingVina(object):
     def __init__(self, target):
         super().__init__()
@@ -167,18 +172,20 @@ class DockingVina(object):
             try:
                 self.gen_3d(smi, ligand_mol_file)
             except Exception as e:
-                print(e)
-                print("gen_3d unexpected error:", sys.exc_info())
-                print("smiles: ", smi)
+                if _is_verbose():
+                    print(e)
+                    print("gen_3d unexpected error:", sys.exc_info())
+                    print("smiles: ", smi)
                 return_dict[idx] = 99.9
                 continue
             try:
                 affinity_list = self.docking(receptor_file, ligand_mol_file,
                                              ligand_pdbqt_file, docking_pdbqt_file)
             except Exception as e:
-                print(e)
-                print("docking unexpected error:", sys.exc_info())
-                print("smiles: ", smi)
+                if _is_verbose():
+                    print(e)
+                    print("docking unexpected error:", sys.exc_info())
+                    print("smiles: ", smi)
                 return_dict[idx] = 99.9
                 continue
             if len(affinity_list)==0:

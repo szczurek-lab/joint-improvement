@@ -36,15 +36,20 @@ def test_mlm_collator_basic():
     # Note: input_ids will have masked tokens (65 is mask token ID)
     # The exact values depend on which tokens were randomly masked
     assert batch["input_ids"].shape == batch["attention_mask"].shape
-    assert torch.equal(
-        batch["attention_mask"][0],
-        torch.tensor([1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]),
-    )
+    # Collator pads to a fixed length (multiple of 32) for compile-friendly shapes.
+    collator = mlm_loader.collator  # type: ignore[attr-defined]
+    pad_to_length = ((collator.max_length + 31) // 32) * 32
+    assert batch["attention_mask"].shape[-1] == pad_to_length
     assert batch["task"] == "mlm"
     assert batch["targets"] is None
     # Labels should have -100 for non-masked positions and original token IDs for masked positions
     assert batch["labels"] is not None
     assert batch["labels"].shape == batch["input_ids"].shape
+    # Task token + padding must be ignored (-100)
+    assert batch["labels"][0, 0].item() == -100
+    pad_positions = batch["attention_mask"][0] == 0
+    if pad_positions.any():
+        assert (batch["labels"][0][pad_positions] == -100).all()
     # Verify that labels have -100 for non-masked positions
     # (masked positions will have the original token ID)
     assert (batch["labels"][0] == -100).any() or (batch["labels"][0] >= 0).any()
@@ -74,9 +79,9 @@ def test_mlm_collator_masking():
 
     # Verify masking occurred (some tokens should be masked)
     mask_token_id = tokenizer.mask_token_id
-    if mask_token_id is not None:
-        # Check that at least some tokens are masked
-        assert (batch["input_ids"] == mask_token_id).any()
+    assert mask_token_id is not None
+    # Check that at least some tokens are masked
+    assert (batch["input_ids"] == mask_token_id).any()
 
     # Verify labels structure: -100 for non-masked, token ID for masked
     assert batch["labels"] is not None

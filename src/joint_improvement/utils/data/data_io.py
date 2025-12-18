@@ -32,19 +32,19 @@ def load_npz_data(
         Additional keys to load from the NPZ archive. Each keyword argument
         name should be the key name in the NPZ file.
 
-    Returns:
+    Returns
     -------
     dict[str, Any]
         Dictionary containing all loaded data.
 
-    Raises:
+    Raises
     ------
     FileNotFoundError
         If the specified path does not exist.
     KeyError
         If any specified key (sequence_key, target_key, or additional_keys) is not found in the archive.
 
-    Examples:
+    Examples
     --------
     >>> data = load_npz_data(
     ...     "data.npz",
@@ -104,7 +104,7 @@ def save_npz_data(path: Path | str, data: dict[str, Any], verbose: bool = False)
     verbose : bool, default=False
         If True, log summary information (length, dtype, shape) for each array being saved.
 
-    Examples:
+    Examples
     --------
     >>> import numpy as np
     >>> from pathlib import Path

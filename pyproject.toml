@@ -17,7 +17,9 @@ dependencies = [
   "transformers>=4.49.0",
   "tqdm",
   "numpy",
+  "pandas",
   "loguru",
+  "scikit-learn",
 ]
 
 [project.optional-dependencies]
@@ -112,6 +114,10 @@ show_error_context = true
 ignore_missing_imports = true
 no_strict_optional = true
 follow_imports = "skip"
+files = ["src/joint_improvement"]
+check_untyped_defs = true
+warn_unused_ignores = true
+warn_redundant_casts = true
 exclude = [
     ".*/incremental_sbs\\.py$",
     ".*/stochastic_beam_search\\.py$",

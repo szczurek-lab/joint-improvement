@@ -109,7 +109,7 @@ class PretrainedMixin:
         if device:
             # Type check: classes using this mixin should inherit from nn.Module
             if hasattr(self, "to"):
-                self.to(device)  # type: ignore[attr-defined]
+                self.to(device)
 
         logger.info("Loaded weights from {}", path)
 

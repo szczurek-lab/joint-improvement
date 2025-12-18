@@ -20,6 +20,7 @@ class MLMCollator(BaseCollatorWithPadding):
     - Each token is independently selected for masking with probability ``mlm_probability``
     - Of masked tokens: 80% replaced with [MASK], 10% with random token, 10% unchanged
     - Labels: -100 for non-masked positions, original token ID for masked positions
+    - Task token and padding positions are always -100
     """
 
     def __init__(
@@ -85,14 +86,20 @@ class MLMCollator(BaseCollatorWithPadding):
         device = input_ids.device
         shape = input_ids.shape
         generator = self._get_generator(device)
+
+        mask_token_id = self.tokenizer.mask_token_id
+        if mask_token_id is None:
+            raise ValueError(
+                "MLM requires tokenizer.mask_token_id to be set, but it is None. "
+                "Please configure a mask token in the tokenizer config."
+            )
+
         # Collect special token IDs that should not be masked
         special_token_ids = {
             self.tokenizer.pad_token_id,
             self.tokenizer.task_token_ids[self.task_token],
+            mask_token_id,
         }
-        mask_token_id = self.tokenizer.mask_token_id
-        if mask_token_id is not None:
-            special_token_ids.add(mask_token_id)
 
         # Create mask for tokens that can be masked (not padding, not special, real tokens)
         can_mask = attention_mask.bool()
@@ -103,6 +110,11 @@ class MLMCollator(BaseCollatorWithPadding):
         probability_matrix = torch.full(shape, self.mlm_probability, device=device)
         masked_indices = can_mask & (torch.rand(shape, device=device, generator=generator) < probability_matrix)
         labels[~masked_indices] = -100  # Only compute loss on masked tokens
+
+        # Enforce invariants explicitly: task token + padding are always ignored in labels.
+        if labels.numel() > 0:
+            labels[:, 0] = -100
+        labels = labels.masked_fill(attention_mask == 0, -100)
 
         # 80% of masked tokens: replace with [MASK]
         replace_with_mask = masked_indices & (torch.rand(shape, device=device, generator=generator) < 0.8)

@@ -66,7 +66,6 @@ class UnconditionalGeneratorMixin(GeneratorMixin):
         temperature: float = 1.0,
         top_k: int | None = None,
         top_p: float | None = None,
-        use_cache: bool = False,
         generator: torch.Generator | None = None,
     ) -> torch.LongTensor:
         """Generate sequences using unconditional generation.
@@ -85,8 +84,6 @@ class UnconditionalGeneratorMixin(GeneratorMixin):
             If provided, only sample from top-k tokens.
         top_p : float | None, default=None
             If provided, use nucleus (top-p) unconditional generation. Should be in (0, 1].
-        use_cache : bool, default=False
-            Whether to use KV caching for faster generation.
         generator : torch.Generator | None, default=None
             Random number generator for reproducible generation. If None, uses default random state.
 
@@ -98,34 +95,13 @@ class UnconditionalGeneratorMixin(GeneratorMixin):
         batch_size = input_ids.shape[0]
         device = input_ids.device
 
-        # Initialize KV caches if using cache
-        kv_caches = None
-        if use_cache:
-            kv_caches = [None] * self._get_num_layers()
-
         # Track generated sequences and whether each is finished
         generated = input_ids.clone()
         finished = torch.zeros(batch_size, dtype=torch.bool, device=device)
 
-        # Track if cache has been initialized (cache is initialized after first forward pass)
-        cache_initialized = False
-
         for _ in range(max_new_tokens):
             # Get logits for next token
-            # On first iteration with cache, pass full sequence to initialize cache
-            # On subsequent iterations, only pass last token since cache contains history
-            if use_cache and cache_initialized:
-                # Cache is initialized, only pass the last token
-                input_ids_for_logits = generated[:, -1:]
-            else:
-                # First iteration or no cache: pass full sequence
-                input_ids_for_logits = generated
-
-            logits, kv_caches = self._get_model_logits(input_ids_for_logits, kv_caches=kv_caches, use_cache=use_cache)
-
-            # Mark cache as initialized after first forward pass
-            if use_cache and not cache_initialized:
-                cache_initialized = kv_caches is not None and any(cache is not None for cache in kv_caches)
+            logits = self._get_model_logits(generated)
 
             # Sample next token
             next_tokens = self._sample_token(
@@ -156,7 +132,6 @@ class UnconditionalGeneratorMixin(GeneratorMixin):
         temperature: float = 1.0,
         top_k: int | None = None,
         top_p: float | None = None,
-        use_cache: bool = False,
         seed: int | None = None,
     ) -> list[torch.LongTensor]:
         """Generate multiple sequences using unconditional generation.
@@ -177,8 +152,6 @@ class UnconditionalGeneratorMixin(GeneratorMixin):
             If provided, only sample from top-k tokens.
         top_p : float | None, default=None
             If provided, use nucleus (top-p) unconditional generation. Should be in (0, 1].
-        use_cache : bool, default=True
-            Whether to use KV caching for faster generation. Passed to generate().
         seed : int | None, default=None
             Random seed for reproducible generation. If provided, creates generators for each sample.
 
@@ -209,10 +182,9 @@ class UnconditionalGeneratorMixin(GeneratorMixin):
                 temperature=temperature,
                 top_k=top_k,
                 top_p=top_p,
-                use_cache=use_cache,
                 generator=generator,
             )
-            # Split batch into individual sequences and add to list
+
             for batch_idx in range(batch_size):
                 generated_sequences.append(generated_batch[batch_idx])
 
@@ -221,9 +193,7 @@ class UnconditionalGeneratorMixin(GeneratorMixin):
     @torch.inference_mode()
     def _get_model_logits(
         self: Hyformer,
-        input_ids: torch.LongTensor,
-        kv_caches: list | None = None,
-        use_cache: bool = True,
+        input_ids: torch.LongTensor
     ) -> tuple[torch.FloatTensor, list | None]:
         """Get model logits for next token prediction.
 
@@ -233,10 +203,6 @@ class UnconditionalGeneratorMixin(GeneratorMixin):
         ----------
         input_ids : torch.LongTensor
             Input token IDs of shape [B, T].
-        kv_caches : list | None, default=None
-            List of KV caches for each layer.
-        use_cache : bool, default=True
-            Whether to use and update KV caches.
 
         Returns
         -------
@@ -249,20 +215,14 @@ class UnconditionalGeneratorMixin(GeneratorMixin):
             input_ids=input_ids,
             attention_mask=None,
             task="lm",
-            kv_caches=kv_caches,
-            use_cache=use_cache,
         )
         logits = outputs.logits  # [B, T, vocab_size] or [B, vocab_size]
-
-        # Extract updated KV caches from extras
-        updated_kv_caches = outputs.extras.get("kv_caches") if use_cache else None
 
         # Handle both [B, T, vocab_size] and [B, vocab_size] shapes
         if logits.dim() == 3:
             logits = logits[:, -1, :]  # [B, T, vocab_size] -> [B, vocab_size]
-        # If already [B, vocab_size], use as is
 
-        return logits, updated_kv_caches
+        return logits
 
     def _get_num_layers(self: Hyformer) -> int:
         """Get number of transformer layers for KV cache initialization.

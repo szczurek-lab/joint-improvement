@@ -1,15 +1,17 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import numpy as np
 from torch.utils.data import Dataset
 
 from joint_improvement.utils.config import BaseConfig
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable
 
 
 @dataclass
@@ -46,7 +48,7 @@ class SequenceDataset(Dataset):
     """
 
     SEQUENCE_FIELD: str = "sequence"
-    TARGET_FIELD: str = "labels"
+    TARGET_FIELD: str = "targets"
 
     def __init__(
         self,
@@ -134,7 +136,9 @@ class SequenceDataset(Dataset):
 
         """
         sequence = self._sequences[index]
-        target: float | int | None = self._targets[index] if self._targets is not None else None
+        target: float | int | None = (
+            self._targets[index] if self._targets is not None else None
+        )
 
         if self.transforms is not None:
             for transform in self.transforms:
@@ -142,7 +146,7 @@ class SequenceDataset(Dataset):
 
         if target is not None and self.target_transforms is not None:
             for target_transform in self.target_transforms:
-                target = target_transform(target)  # type: ignore[assignment, arg-type]
+                target = target_transform(target)
 
         if target is None:
             return {
@@ -153,6 +157,55 @@ class SequenceDataset(Dataset):
                 self.SEQUENCE_FIELD: sequence,
                 self.TARGET_FIELD: target,
             }
+
+    def append(
+        self,
+        sequences: Sequence[str],
+        targets: Sequence[float | int | Sequence[float | int]] | None = None,
+    ) -> None:
+        """Safely append sequences and targets to the dataset with shape and dtype validation.
+
+        Parameters
+        ----------
+        sequences : Sequence[str]
+            New sequences to append. Must be non-empty and contain only strings.
+        targets : Sequence[float | int | Sequence[float | int]], optional
+            New targets to append. Can be scalars or arrays (for multi-target regression).
+
+        Examples
+        --------
+        >>> dataset = SequenceDataset(sequences=["ABC", "DEF"], targets=[1.0, 2.0])
+        >>> dataset.append(sequences=["GHI"], targets=[3.0])
+        >>> len(dataset)
+        3
+
+        >>> # Multi-target regression
+        >>> dataset = SequenceDataset(
+        ...     sequences=["ABC"],
+        ...     targets=[[1.0, 2.0, 3.0]]
+        ... )
+        >>> dataset.append(sequences=["DEF"], targets=[[4.0, 5.0, 6.0]])
+        """
+        new_sequences = (
+            sequences.tolist() if isinstance(sequences, np.ndarray) else list(sequences)
+        )
+        self._sequences.extend(new_sequences)
+        if self._targets is not None and targets is not None:
+            new_targets = (
+                targets.tolist() if isinstance(targets, np.ndarray) else list(targets)
+            )
+            assert len(new_sequences) == len(
+                new_targets
+            ), "`sequences` and `targets` must have the same length."
+            # Check if targets are sequences (multi-target case)
+            if new_targets and isinstance(new_targets[0], Sequence):
+                assert isinstance(
+                    self._targets[0], Sequence
+                ), "Cannot mix scalar and sequence targets."
+                assert len(new_targets[0]) == len(
+                    self._targets[0]
+                ), "`targets` must have the same shape as the existing targets."
+            self._targets.extend(new_targets)  # type: ignore[arg-type]
 
     @classmethod
     def from_config(
@@ -193,7 +246,8 @@ class SequenceDataset(Dataset):
         target_transforms = None
         if config.target_transforms:
             target_transforms = [
-                create_target_transform(transform_config) for transform_config in config.target_transforms
+                create_target_transform(transform_config)
+                for transform_config in config.target_transforms
             ]
 
         return cls(

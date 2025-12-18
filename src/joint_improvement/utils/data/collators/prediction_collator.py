@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+import numpy as np
 import torch
 
 from joint_improvement.utils.data.dataset import SequenceDataset
@@ -67,7 +68,7 @@ class PredictionCollator(BaseCollatorWithPadding):
                 )
             # Determine label dtype and prepare labels
             targets_dtype = torch.long if isinstance(targets[0], (int, bool)) else torch.float32
-            targets_tensor = torch.tensor(targets, dtype=targets_dtype)
+            targets_tensor = torch.tensor(np.array(targets), dtype=targets_dtype)
             # Ensure targets are 2D: [batch_size, num_targets]
             if len(targets_tensor.shape) == 1:
                 targets_tensor = targets_tensor.unsqueeze(1)

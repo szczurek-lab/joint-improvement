@@ -15,7 +15,8 @@ if TYPE_CHECKING:
 class LMCollator(BaseCollatorWithPadding):
     """Collator for causal language modeling (next-token prediction).
 
-    Labels are set to be the same as input_ids (shifted internally during loss computation).
+    Labels are set to be the same as input_ids (shifted internally during loss computation),
+    except that the task token and padding positions are set to -100 (ignored).
     """
 
     def __init__(
@@ -35,7 +36,7 @@ class LMCollator(BaseCollatorWithPadding):
         """Prepare labels for causal language modeling.
 
         Labels are the same as input_ids (will be shifted internally during loss computation).
-        Task token is included in labels.
+        Task token and padding are ignored in labels (-100).
 
         Parameters
         ----------
@@ -51,6 +52,12 @@ class LMCollator(BaseCollatorWithPadding):
         tuple[torch.Tensor | None, torch.Tensor | None]
             Tuple of (labels, None) where labels are cloned input_ids.
         """
-        # Prepare labels (same as input_ids for causal LM, will be shifted in loss computation)
+        # Prepare labels (same as input_ids for causal LM, will be shifted in loss computation).
+        # Critical convention: task token + padding tokens must be ignored by the loss.
         labels = input_ids.clone()
+        # Ignore task token (always first position after base collator prepends it).
+        if labels.numel() > 0:
+            labels[:, 0] = -100
+        # Ignore padding tokens.
+        labels = labels.masked_fill(attention_mask == 0, -100)
         return labels, None
