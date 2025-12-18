@@ -139,6 +139,4 @@ def calculate_model_predictions(
         drop_last=False,
     )
     for batch in dataloader:
-    
-    predictions = model.generate(solutions, device=device)
-    return predictions
+        pass
