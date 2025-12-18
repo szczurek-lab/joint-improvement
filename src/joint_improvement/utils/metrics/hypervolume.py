@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import itertools
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 import torch
 from pymoo.indicators.hv import HV
 from torch import Tensor
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 # maximum tensor size for simple pareto computation
 MAX_BYTES = 5e6
@@ -127,15 +131,19 @@ def _is_non_dominated_loop(
     return is_efficient
 
 
-def get_all_metrics(solutions, eval_metrics, **kwargs):
+def get_all_metrics(
+    solutions: np.ndarray,
+    eval_metrics: list[str],
+    **kwargs: Any,
+) -> dict[str, float]:
     """Compute metrics for solutions already filtered to the Pareto front."""
-    metrics = {}
-    if "hypervolume" in eval_metrics and "hv_ref" in kwargs.keys():
+    metrics: dict[str, float] = {}
+    if "hypervolume" in eval_metrics and "hv_ref" in kwargs:
         hv_indicator = HV(ref_point=kwargs["hv_ref"])
         # `-` cause pymoo assumes minimization
         metrics["hypervolume"] = hv_indicator.do(-solutions)
 
-    if "r2" in eval_metrics and "r2_prefs" in kwargs.keys() and "num_obj" in kwargs.keys():
+    if "r2" in eval_metrics and "r2_prefs" in kwargs and "num_obj" in kwargs:
         metrics["r2"] = r2_indicator_set(kwargs["r2_prefs"], solutions, np.ones(kwargs["num_obj"]))
 
     # if "hsri" in eval_metrics and "num_obj" in kwargs.keys():
@@ -154,11 +162,15 @@ def get_all_metrics(solutions, eval_metrics, **kwargs):
     return metrics
 
 
-def r2_indicator_set(reference_points, solutions, utopian_point):
+def r2_indicator_set(
+    reference_points: np.ndarray,
+    solutions: np.ndarray,
+    utopian_point: np.ndarray,
+) -> float:
     """Compute R2 indicator value for solutions relative to reference points."""
-    min_list = []
+    min_list: list[float] = []
     for v in reference_points:
-        max_list = []
+        max_list: list[float] = []
         for a in solutions:
             max_list.append(np.max(v * np.abs(utopian_point - a)))
         min_list.append(np.min(max_list))
@@ -166,10 +178,14 @@ def r2_indicator_set(reference_points, solutions, utopian_point):
     v_norm = np.linalg.norm(reference_points)
     r2 = np.sum(min_list) / v_norm
 
-    return r2
+    return float(r2)
 
 
-def pareto_frontier(solutions, rewards, maximize=True):
+def pareto_frontier(
+    solutions: np.ndarray | None,
+    rewards: np.ndarray,
+    maximize: bool = True,
+) -> tuple[np.ndarray | None, np.ndarray]:
     pareto_mask = is_non_dominated(torch.tensor(rewards).cpu() if maximize else -torch.tensor(rewards).cpu())
     if solutions is not None:
         if solutions.shape[0] == 1:
@@ -185,23 +201,31 @@ def pareto_frontier(solutions, rewards, maximize=True):
     return pareto_front, pareto_rewards
 
 
-def generate_simplex(dims, n_per_dim):
+def generate_simplex(dims: int, n_per_dim: int) -> np.ndarray:
     spaces = [np.linspace(0.0, 1.0, n_per_dim) for _ in range(dims)]
     return np.array([comb for comb in itertools.product(*spaces) if np.allclose(sum(comb), 1.0)])
 
 
-def get_pareto_fronts(states, rewards):
+def get_pareto_fronts(
+    states: np.ndarray | Sequence[str] | None,
+    rewards: np.ndarray | Sequence[float],
+) -> tuple[np.ndarray | None, np.ndarray]:
+    states_array: np.ndarray | None = None
     if states is not None:
-        states = np.array(states)
-    rewards = np.array(rewards)
-    if rewards.ndim == 1:
-        rewards = np.expand_dims(rewards, 0)
+        states_array = np.array(states)
+    rewards_array = cast("np.ndarray", np.array(rewards))
+    if rewards_array.ndim == 1:
+        rewards_array = np.expand_dims(rewards_array, 0)
 
-    pareto_candidates, pareto_rewards = pareto_frontier(states, rewards, maximize=True)
+    pareto_candidates, pareto_rewards = pareto_frontier(states_array, rewards_array, maximize=True)
     return pareto_candidates, pareto_rewards
 
 
-def get_hypervolume(states, rewards, num_objectives):
+def get_hypervolume(
+    states: np.ndarray | Sequence[str] | None,
+    rewards: np.ndarray | Sequence[float],
+    num_objectives: int,
+) -> tuple[float, float]:
     pareto_candidates, pareto_rewards = get_pareto_fronts(states, rewards)
     simplex = generate_simplex(num_objectives, n_per_dim=10)
     mo_metrics = get_all_metrics(
@@ -210,7 +234,12 @@ def get_hypervolume(states, rewards, num_objectives):
     return mo_metrics["hypervolume"], mo_metrics["r2"]
 
 
-def calculate_hypervolume(normalized_qed_scores, normalized_sa_scores, normalized_docking_scores, sampled_sequences):
+def calculate_hypervolume(
+    normalized_qed_scores: np.ndarray | Sequence[float],
+    normalized_sa_scores: np.ndarray | Sequence[float],
+    normalized_docking_scores: np.ndarray | Sequence[float],
+    sampled_sequences: np.ndarray | Sequence[str],
+) -> tuple[float, float]:
     all_score = np.stack([normalized_qed_scores, normalized_sa_scores, normalized_docking_scores], axis=1)  # (N, 3)
 
     # 3) (Optional) keep track of SMILES, as in Oracle.input_offline_data
@@ -219,4 +248,4 @@ def calculate_hypervolume(normalized_qed_scores, normalized_sa_scores, normalize
     # 4) Get Pareto front and hypervolume
     candidates, pareto_rewards = get_pareto_fronts(smiles, all_score)  # pareto_rewards: [P, 3]
     HV, R2 = get_hypervolume(None, pareto_rewards, 3)
-    return HV, R2.item()
+    return HV, float(R2)
