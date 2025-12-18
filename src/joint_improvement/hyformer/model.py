@@ -1,8 +1,6 @@
 # model.py
 from __future__ import annotations
 
-from typing import Any
-
 import torch
 from torch import nn
 
@@ -213,8 +211,7 @@ class Hyformer(PretrainedMixin, nn.Module):
     def predict(
         self,
         input_ids: torch.Tensor,
-        attention_mask: torch.Tensor,
-        **kwargs: Any,
+        attention_mask: torch.Tensor
     ) -> torch.Tensor:
         """Run the prediction head and return post-processed predictions.
 
@@ -344,6 +341,12 @@ class Hyformer(PretrainedMixin, nn.Module):
             from joint_improvement.generators import TasarMixinLegacy
 
             HyformerClass = type("Hyformer", (TasarMixinLegacy, cls), {})
+            return HyformerClass(**init_kwargs)
+
+        elif generator_type == "gumbeldore":
+            from joint_improvement.generators import GumbeldoreMixin
+
+            HyformerClass = type("Hyformer", (GumbeldoreMixin, cls), {})
             return HyformerClass(**init_kwargs)
         else:
             raise ValueError(

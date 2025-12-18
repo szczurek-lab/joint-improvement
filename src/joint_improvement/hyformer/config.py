@@ -130,9 +130,11 @@ class HyformerConfig(BaseConfig):
                 )
         if self.generator_type is not None and self.generator_type not in (
             "unconditional",
+            "gumbeldore",
             "tasar",
             "tasar_legacy",
         ):
             raise ValueError(
-                f"generator_type must be one of 'unconditional', 'tasar', 'tasar_legacy', got {self.generator_type!r}"
+                f"generator_type must be one of 'unconditional', 'gumbeldore', "
+                f"'tasar', 'tasar_legacy', got {self.generator_type!r}"
             )
