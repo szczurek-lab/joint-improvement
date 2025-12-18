@@ -1,25 +1,12 @@
 import json
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from pathlib import Path
 
 import numpy as np
-from scipy.stats import spearmanr
 
 from experiments.helpers import load_dataset
 from joint_improvement.utils import SequenceDataset
-from joint_improvement.utils.chemistry import (
-    calculate_qed_batch,
-    calculate_sa_batch,
-)
 from joint_improvement.utils.chemistry.docking import DOCKING_THRESHOLDS
-from joint_improvement.utils.metrics import (
-    calculate_hit_ratio,
-    calculate_hypervolume,
-    calculate_intdiv1,
-)
-
-OptimizationMetrics = dict[str, float]
-RegressionMetrics = dict[str, float]
 
 
 def docking_target_transform(target: np.ndarray) -> np.ndarray:
@@ -58,65 +45,6 @@ def load_docking_dataset(
 def get_optimization_threshold(target: str) -> float:
     """Returns the optimization threshold for the given target."""
     return DOCKING_THRESHOLDS[target]
-
-
-
-
-def calculate_optimization_metrics(
-    smiles: Sequence[str],
-    objective_scores: Sequence[float],
-    threshold: float,
-    out_dir: Path | None = None,
-    optimization_round: int | None = None,
-) -> OptimizationMetrics:
-    """Calculates the optimization metrics for the given smiles and objective scores."""
-    smiles = np.array(smiles, dtype=str)
-    objective_scores = np.array(objective_scores, dtype=float)
-
-    intdiv1 = calculate_intdiv1(smiles)
-    qed_scores = calculate_qed_batch(smiles)
-    sa_scores = calculate_sa_batch(smiles)
-    hit_ratio_no_constraints = calculate_hit_ratio(
-        objective_scores=objective_scores, objective_threshold=threshold
-    )
-    hit_ratio = calculate_hit_ratio(
-        objective_scores=objective_scores,
-        objective_threshold=threshold,
-        qed_scores=qed_scores,
-        sa_scores=sa_scores,
-    )
-    normalized_docking_scores = -objective_scores / 20  # type: ignore[operator]
-    normalized_sa_scores = (10 - sa_scores) / 9
-    normalized_qed_scores = qed_scores
-    hv, r2 = calculate_hypervolume(
-        normalized_docking_scores, normalized_qed_scores, normalized_sa_scores, smiles
-    )
-    current_metrics = {
-        "intdiv1": float(intdiv1),
-        "hit_ratio_no_constraints": float(hit_ratio_no_constraints),
-        "hit_ratio": float(hit_ratio),
-        "hv": float(hv),
-        "r2": float(r2),
-    }
-
-    if out_dir is not None:
-        metrics_file = out_dir / "optimization_metrics.json"
-        if metrics_file.exists():
-            with open(metrics_file) as f:
-                all_metrics = json.load(f)
-            if optimization_round is not None:
-                all_metrics[f"round_{optimization_round}"] = current_metrics
-            else:
-                all_metrics.update(current_metrics)
-        else:
-            if optimization_round is not None:
-                all_metrics = {f"round_{optimization_round}": current_metrics}
-            else:
-                all_metrics = current_metrics
-        with open(metrics_file, "w") as f:
-            json.dump(all_metrics, f, indent=2)
-
-    return current_metrics
 
 
 def save_solutions(
@@ -190,37 +118,27 @@ def save_solutions(
     with open(solutions_file, "w") as f:
         json.dump(all_solutions, f, indent=2)
 
-
-def calculate_regression_metrics(
-    predicted: Sequence[float],
-    true: Sequence[float],
-    inverse_transform: Callable[[np.ndarray], np.ndarray],
-    out_dir: Path | None = None,
-    optimization_round: int | None = None,
-) -> RegressionMetrics:
-    """Calculates the regression metrics for the given predicted and true values."""
-    predicted_arr = inverse_transform(np.array(predicted, dtype=np.float32))
-    true_arr = inverse_transform(np.array(true, dtype=np.float32))
-    mae = np.mean(np.abs(predicted_arr - true_arr))
-    spearman_corr = spearmanr(predicted_arr, true_arr).correlation
-    current_metrics = {"mae": float(mae), "spearman_corr": float(spearman_corr)}
-
-    if out_dir is not None:
-        metrics_file = out_dir / "regression_metrics.json"
-        if metrics_file.exists():
-            with open(metrics_file) as f:
-                all_metrics = json.load(f)
-            if optimization_round is not None:
-                all_metrics[f"round_{optimization_round}"] = current_metrics
-            else:
-                all_metrics.update(current_metrics)
-        else:
-            if optimization_round is not None:
-                all_metrics = {f"round_{optimization_round}": current_metrics}
-            else:
-                all_metrics = current_metrics
-        with open(metrics_file, "w") as f:
-            json.dump(all_metrics, f, indent=2)
-
-    return current_metrics
-
+def calculate_model_predictions(
+    solutions: Sequence[str],
+    tokenizer: SMILESTokenizer,
+    model: torch.nn.Module,
+    device: torch.device,
+    batch_size: int = 256,
+) -> np.ndarray:
+    """Calculates the model predictions for the given solutions."""
+    from joint_improvement.utils import SequenceDataLoader, PredictionCollator, SequenceDataset
+    
+    dataset = SequenceDataset(sequences=solutions)
+    dataloader = SequenceDataLoader(
+        dataset=dataset,
+        collator=PredictionCollator(tokenizer=tokenizer),
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=0,
+        pin_memory=True,
+        drop_last=False,
+    )
+    for batch in dataloader:
+    
+    predictions = model.generate(solutions, device=device)
+    return predictions

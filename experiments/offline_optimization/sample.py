@@ -27,10 +27,10 @@ def oracle_fn(
 
     input_idx = input_idx.unsqueeze(0).to(model_device)
     attention_mask = torch.ones_like(input_idx).to(model_device)
-    # choose only docking score prediction
-    prediction = model.predict(input_ids=input_idx, attention_mask=attention_mask)[:, 0]
-
-    return prediction.item()
+    ds_pred = model.predict(input_ids=input_idx, attention_mask=attention_mask)[:, 0].item()
+    sa_pred = model.predict(input_ids=input_idx, attention_mask=attention_mask)[:, 1].item()
+    qed_pred = model.predict(input_ids=input_idx, attention_mask=attention_mask)[:, 2].item()
+    return ds_pred * sa_pred * qed_pred
 
 
 def sample_new_solutions(
@@ -88,4 +88,4 @@ def sample_new_solutions(
         sampled_solutions = list(set(sampled_solutions))
 
 
-    return sampled_solutions[-num_samples:]
+    return sampled_solutions

@@ -92,36 +92,45 @@ class UnconditionalGeneratorMixin(GeneratorMixin):
         torch.LongTensor
             Generated sequences of shape [B, T + max_new_tokens].
         """
-        batch_size = input_ids.shape[0]
-        device = input_ids.device
+        # Ensure model is in eval mode for inference
+        was_training = self.training
+        self.eval()
 
-        # Track generated sequences and whether each is finished
-        generated = input_ids.clone()
-        finished = torch.zeros(batch_size, dtype=torch.bool, device=device)
+        try:
+            batch_size = input_ids.shape[0]
+            device = input_ids.device
 
-        for _ in range(max_new_tokens):
-            # Get logits for next token
-            logits = self._get_model_logits(generated)
+            # Track generated sequences and whether each is finished
+            generated = input_ids.clone()
+            finished = torch.zeros(batch_size, dtype=torch.bool, device=device)
 
-            # Sample next token
-            next_tokens = self._sample_token(
-                logits,
-                temperature=temperature,
-                top_k=top_k,
-                top_p=top_p,
-                generator=generator,
-            )
+            for _ in range(max_new_tokens):
+                # Get logits for next token
+                logits = self._get_model_logits(generated)
 
-            # Update generated sequences
-            generated = torch.cat([generated, next_tokens.unsqueeze(1)], dim=1)
+                # Sample next token
+                next_tokens = self._sample_token(
+                    logits,
+                    temperature=temperature,
+                    top_k=top_k,
+                    top_p=top_p,
+                    generator=generator,
+                )
 
-            # Check for EOS tokens
-            if eos_token_id is not None:
-                finished = finished | (next_tokens == eos_token_id)
-                if finished.all():
-                    break
+                # Update generated sequences
+                generated = torch.cat([generated, next_tokens.unsqueeze(1)], dim=1)
 
-        return generated
+                # Check for EOS tokens
+                if eos_token_id is not None:
+                    finished = finished | (next_tokens == eos_token_id)
+                    if finished.all():
+                        break
+
+            return generated
+        finally:
+            # Restore original training mode
+            if was_training:
+                self.train()
 
     def generate_batch(
         self,
