@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+import numpy as np
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -16,50 +18,91 @@ class ZScoreScaler:
     """Z-score normalization (standardization) scaler for target values.
 
     Transforms targets using z-score normalization: (x - mean) / std.
+    Supports both scalar values and numpy arrays.
     """
 
-    def __init__(self, mean: float, std: float) -> None:
+    def __init__(self, mean: float | np.ndarray, std: float | np.ndarray) -> None:
         """Initialize ZScoreScaler with precomputed statistics.
 
         Parameters
         ----------
-        mean : float
-            Mean of the target values.
-        std : float
-            Standard deviation of the target values.
+        mean : float | np.ndarray
+            Mean of the target values. Can be a scalar or array for element-wise normalization.
+        std : float | np.ndarray
+            Standard deviation of the target values. Can be a scalar or array for element-wise normalization.
         """
-        self.mean = mean
-        self.std = std
+        self.mean = np.asarray(mean) if isinstance(mean, (list, tuple, np.ndarray)) else mean
+        self.std = np.asarray(std) if isinstance(std, (list, tuple, np.ndarray)) else std
 
-    def __call__(self, value: float | int) -> float:
-        """Transform a single target value using z-score normalization.
+    def __call__(self, value: float | int | np.ndarray) -> float | np.ndarray:
+        """Transform target value(s) using z-score normalization.
 
         Parameters
         ----------
-        value : float | int
-            Target value to transform.
+        value : float | int | np.ndarray
+            Target value(s) to transform. Can be a scalar or numpy array.
 
         Returns
         -------
-        float
-            Z-score normalized target value: (value - mean) / std.
+        float | np.ndarray
+            Z-score normalized target value(s): (value - mean) / std.
+            Returns float for scalar input, np.ndarray for array input.
         """
-        return float((value - self.mean) / self.std)
+        # Check if we're dealing with arrays (either value is array-like or mean/std are arrays)
+        is_array_case = (
+            isinstance(value, (np.ndarray, list, tuple)) or
+            isinstance(self.mean, np.ndarray) or
+            isinstance(self.std, np.ndarray)
+        )
+        
+        if is_array_case:
+            value = np.asarray(value, dtype=np.float32)
+            mean = np.asarray(self.mean, dtype=np.float32)
+            std = np.asarray(self.std, dtype=np.float32)
+            # Handle broadcasting: if mean/std are scalars, they broadcast; if arrays, element-wise
+            result = (value - mean) / std
+            # If result is a scalar (0D array), return as float; otherwise return array
+            if result.ndim == 0:
+                return float(result)
+            return result.astype(np.float32)
+        else:
+            # Scalar case - both value and mean/std are scalars
+            return float((value - self.mean) / self.std)
 
-    def inverse_transform(self, value: float) -> float:
-        """Inverse transform a z-score normalized value back to original scale.
+    def inverse_transform(self, value: float | np.ndarray) -> float | np.ndarray:
+        """Inverse transform z-score normalized value(s) back to original scale.
 
         Parameters
         ----------
-        value : float
-            Z-score normalized value to transform back.
+        value : float | np.ndarray
+            Z-score normalized value(s) to transform back. Can be a scalar or numpy array.
 
         Returns
         -------
-        float
-            Value in original scale: value * std + mean.
+        float | np.ndarray
+            Value(s) in original scale: value * std + mean.
+            Returns float for scalar input, np.ndarray for array input.
         """
-        return float(value * self.std + self.mean)
+        # Check if we're dealing with arrays (either value is array-like or mean/std are arrays)
+        is_array_case = (
+            isinstance(value, (np.ndarray, list, tuple)) or
+            isinstance(self.mean, np.ndarray) or
+            isinstance(self.std, np.ndarray)
+        )
+        
+        if is_array_case:
+            value = np.asarray(value, dtype=np.float32)
+            mean = np.asarray(self.mean, dtype=np.float32)
+            std = np.asarray(self.std, dtype=np.float32)
+            # Handle broadcasting: if mean/std are scalars, they broadcast; if arrays, element-wise
+            result = value * std + mean
+            # If result is a scalar (0D array), return as float; otherwise return array
+            if result.ndim == 0:
+                return float(result)
+            return result.astype(np.float32)
+        else:
+            # Scalar case - both value and mean/std are scalars
+            return float(value * self.std + self.mean)
 
     @classmethod
     def from_config(cls, config: dict[str, Any]) -> ZScoreScaler:
@@ -69,6 +112,7 @@ class ZScoreScaler:
         ----------
         config : dict[str, Any]
             Configuration dictionary with "type": "zscore", "mean", and "std" keys.
+            Mean and std can be scalars or arrays (lists/tuples/numpy arrays).
 
         Returns
         -------
@@ -78,18 +122,19 @@ class ZScoreScaler:
         return cls(mean=config["mean"], std=config["std"])
 
 
-def create_target_transform(config: dict[str, Any]) -> Callable[[float | int], float]:
+def create_target_transform(config: dict[str, Any]) -> Callable[[float | int | np.ndarray], float | np.ndarray]:
     """Create target transform from configuration dictionary.
 
     Parameters
     ----------
     config : dict[str, Any]
         Configuration dictionary with "type": "zscore", "mean", and "std" keys.
+        Mean and std can be scalars or arrays for element-wise normalization.
 
     Returns
     -------
-    Callable[[float | int], float]
-        Target transform function.
+    Callable[[float | int | np.ndarray], float | np.ndarray]
+        Target transform function that accepts scalars or numpy arrays.
 
     Raises
     ------
