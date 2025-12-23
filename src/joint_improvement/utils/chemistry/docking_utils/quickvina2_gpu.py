@@ -211,12 +211,11 @@ class QuickVina2_GPU(OracleComponent):
             )
 
         # 7. Copy and save the docking output
-        subprocess.run([
-            "cp", 
-            "-r", 
-            temp_output_dir, 
-            os.path.join(self.output_dir, f"results_{oracle_calls}")
-        ])
+        # NOTE: copy the *contents* of the temp output dir, not the temp dir name (avoids results_*/tmpXXXX/ nesting).
+        results_dir = os.path.join(self.output_dir, f"results_{oracle_calls}")
+        if os.path.exists(results_dir):
+            shutil.rmtree(results_dir)
+        shutil.copytree(temp_output_dir, results_dir)
 
         # 8. Parse the docking scores
         docking_scores = np.zeros(len(mols))

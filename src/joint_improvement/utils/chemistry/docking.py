@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import os
+import atexit
 import tempfile
+import shutil
 from typing import Any, Protocol
 
 import numpy as np
@@ -100,6 +102,7 @@ def _make_gpu_predictor(target: str) -> _DockingPredictor:
 
     binary = _get_quickvina2_gpu_binary()
     results_dir = tempfile.mkdtemp(prefix=f"quickvina2_gpu_{target}_")
+    atexit.register(shutil.rmtree, results_dir, ignore_errors=True)
     thread = int(os.environ.get("QUICKVINA2_GPU_THREAD", os.environ.get("QVINA_GPU_THREAD", "5000")))
 
     params = OracleComponentParameters(
