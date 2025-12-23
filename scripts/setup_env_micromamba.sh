@@ -3,21 +3,27 @@ set -euo pipefail
 
 # Parse command-line arguments
 ENV_DIR=""
+WITH_DOCKING_GPU=false
 while [[ $# -gt 0 ]]; do
   case $1 in
     -p|--prefix)
       if [ -z "${2:-}" ]; then
         echo "Error: --prefix/-p requires a path argument"
-        echo "Usage: $0 [--prefix|-p PATH]"
+        echo "Usage: $0 [--prefix|-p PATH] [--with-docking-gpu]"
         exit 1
       fi
       ENV_DIR="$2"
       shift 2
       ;;
+    --with-docking-gpu)
+      WITH_DOCKING_GPU=true
+      shift
+      ;;
     *)
       echo "Unknown option: $1"
-      echo "Usage: $0 [--prefix|-p PATH]"
-      echo "  --prefix, -p PATH   Optional: Path where the environment should be created"
+      echo "Usage: $0 [--prefix|-p PATH] [--with-docking-gpu]"
+      echo "  --prefix, -p PATH       Optional: Path where the environment should be created"
+      echo "  --with-docking-gpu      Optional: Install additional conda deps for QuickVina2-GPU (Boost)"
       exit 1
       ;;
   esac
@@ -97,6 +103,11 @@ if [ "$ENV_EXISTS" = false ]; then
     # Name mode: create using the name from environment.yml
     micromamba create --yes -f "$ENV_YML"
   fi
+fi
+
+if [ "$WITH_DOCKING_GPU" = true ]; then
+  echo "Installing Docking GPU additional dependencies (Boost)..."
+  micromamba install --yes "$ENV_SPEC" "$ENV_LOCATION" -c conda-forge "libboost=1.84.0" "boost-cpp=1.84.0"
 fi
 
 # Install PyTorch with CUDA 12.6 FIRST (before packages that depend on it)

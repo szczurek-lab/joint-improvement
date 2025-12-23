@@ -11,7 +11,7 @@ Install [mamba](https://mamba.readthedocs.io/en/latest/installation.html) (or mi
    ./scripts/setup_env_mamba.sh
    ./scripts/setup_env_mamba.sh --prefix /custom/path/to/env
 
-   # Using micromamba 
+   # Using micromamba
    ./scripts/setup_env_micromamba.sh
    ./scripts/setup_env_micromamba.sh --prefix /custom/path/to/env
    ```
@@ -25,10 +25,31 @@ The setup script will:
 
 **Note**: PyTorch is installed first with CUDA 12.6 support before other dependencies to ensure compatibility. For CPU-only setups, modify the setup script to install PyTorch without the CUDA index URL.
 
-## Pre-commit / pytest environment (Cursor-friendly)
+### Pre-commit / pytest environment (Cursor-friendly)
 
 The `pytest` pre-commit hook runs via `mamba`/`micromamba` and requires an explicit **environment prefix**.
 
 ```bash
 git config joint-improvement.envPrefix /absolute/path/to/your/env
 ```
+
+### Docking (GPU)
+
+If you create your env with the provided setup script, pass the flag:
+```bash
+./scripts/setup_env_mamba.sh --with-docking-gpu
+# or
+./scripts/setup_env_micromamba.sh --with-docking-gpu
+```
+
+Next, clone and build the upstream project (follow their README for your system):
+```bash
+git clone https://github.com/DeltaGroupNJUPT/Vina-GPU-2.1.git
+```
+
+You should end up with a QuickVina2-GPU executable. Export the QuickVina2-GPU binary path and call `calculate_docking`:
+```bash
+export QUICKVINA2_GPU_BINARY=/full/path/to/QuickVina2-GPU-2-1
+python -c "from joint_improvement.utils.chemistry.docking import calculate_docking; print(calculate_docking('CCO', target='braf', device='gpu'))"
+```
+
