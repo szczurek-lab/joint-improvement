@@ -1,5 +1,5 @@
 {
-  "learning_rate": 6e-5,
+  "learning_rate": 1e-4,
   "weight_decay": 0.1,
   "beta1": 0.9,
   "beta2": 0.95,
@@ -13,6 +13,7 @@
   "checkpoint_every_n_epochs": null,
   "patience": 2,
   "compile": true,
+  "allow_tf32": false,
   "tasks": {
     "lm": 0.5,
     "prediction": 0.5

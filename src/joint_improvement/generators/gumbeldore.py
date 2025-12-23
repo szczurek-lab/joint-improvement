@@ -51,7 +51,7 @@ class GumbeldoreMixin(GeneratorMixin):
         logits = self._get_model_logits(self._cast_to_tensor(states))
         if temperature != 1.0:
             logits = self._scale_logits(logits, temperature=temperature)
-        if top_k is not None:
+        if top_k is not None and top_k > 0:
             logits = self._apply_top_k(logits, top_k=top_k)
         log_probs = self._compute_log_probs(logits)
         output_states: StateList = self._cast_to_states(log_probs.cpu().numpy())

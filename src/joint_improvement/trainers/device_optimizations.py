@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 
 def _configure_tf32_for_cuda(allow_tf32: bool = True) -> str:
     """Configure TF32 for CUDA."""
+    torch.backends.cuda.matmul.allow_tf32 = allow_tf32
     torch.backends.fp32_precision = "tf32" if allow_tf32 else "ieee"
     torch.backends.cuda.matmul.fp32_precision = "tf32" if allow_tf32 else "ieee"
     torch.backends.cudnn.fp32_precision = "tf32" if allow_tf32 else "ieee"

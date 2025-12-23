@@ -11,12 +11,6 @@ import numpy as np
 import torch
 from loguru import logger
 
-from joint_improvement.utils.chemistry import (
-    calculate_docking_batch,
-    calculate_qed_batch,
-    calculate_sa_batch,
-)
-
 # Ensure experiments package is importable
 if (project_root := Path(__file__).parent.parent.parent) not in [
     Path(p) for p in sys.path
@@ -25,15 +19,15 @@ if (project_root := Path(__file__).parent.parent.parent) not in [
 
 from experiments.helpers import create_dataloader, load_model, load_tokenizer, load_trainer  # noqa: E402
 from experiments.offline_optimization.helpers import (  # noqa: E402
-    get_optimization_threshold,
-    inverse_docking_target_transform,
-    load_docking_dataset,
+    load_docking_datasets,
     save_solutions,
 )
 from experiments.offline_optimization.metrics import (  # noqa: E402
     calculate_optimization_metrics,
     calculate_regression_metrics,
+    get_optimization_threshold,
 )
+from experiments.offline_optimization.oracle import oracle_call  # noqa: E402
 from experiments.offline_optimization.sample import oracle_fn, sample_new_solutions  # noqa: E402
 from joint_improvement.utils import SequenceDataLoader, set_seed  # noqa: E402
 
@@ -185,13 +179,6 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def oracle_call(solutions: list[str], target: str) -> np.ndarray:
-    ds = calculate_docking_batch(solutions, target=target)
-    sa = calculate_sa_batch(solutions)
-    qed = calculate_qed_batch(solutions)
-    return np.concatenate([ds.reshape(-1, 1), sa.reshape(-1, 1), qed.reshape(-1, 1)], axis=1)
-
-
 def main() -> None:
     """Performs offline optimization by calling the oracle and updating the offline dataset."""
     parser = build_parser()
@@ -204,11 +191,8 @@ def main() -> None:
     threshold = get_optimization_threshold(args.target)
 
     # Load offline dataset, tokenizer and model
-    offline_dataset = load_docking_dataset(
-        args.train_dataset_config, config_dump_dir=args.output_dir
-    )
-    test_dataset = load_docking_dataset(
-        args.test_dataset_config, config_dump_dir=None  # do not save test dataset config
+    offline_dataset, test_dataset = load_docking_datasets(
+        args.train_dataset_config, args.test_dataset_config, config_dump_dir=args.output_dir
     )
     logger.info(f"Loaded {len(offline_dataset)} solutions from offline dataset")
     
@@ -224,7 +208,10 @@ def main() -> None:
     )
 
     optimization_round: int = 0
-    while len(solutions) < args.oracle_budget:
+    while True:
+        
+        if len(solutions) >= args.oracle_budget:
+            break
 
         logger.info("-" * 100)
         logger.info(f"Optimization round {optimization_round} started...")
@@ -235,7 +222,7 @@ def main() -> None:
             args.trainer_config,
             model,
             args.device,
-            None, # do not save checkpoints
+            args.output_dir,
             config_dump_dir=args.output_dir,
         )
 
@@ -264,14 +251,14 @@ def main() -> None:
         # trainer.train() will set model to train mode internally
         trainer.train(train_loaders=train_loaders, val_loaders=val_loaders)
 
-        # 3. Report the test set predictive performance of ds 
+        # 3. Report the test set predictive performance for all targets (DS, SA, QED)
         outputs = trainer.test(dataloader=val_loaders["prediction"])
-        y_true = outputs["true"][:, 0].detach().cpu().numpy()
-        y_pred = outputs["predicted"][:, 0].detach().cpu().numpy()
+        for target_transform in test_dataset.target_transforms:
+            y_true = target_transform.inverse_transform(outputs["true"].detach().cpu().numpy())
+            y_pred = target_transform.inverse_transform(outputs["predicted"].detach().cpu().numpy())
         regression_metrics = calculate_regression_metrics(
             y_pred,
             y_true,
-            inverse_docking_target_transform,
             out_dir=args.output_dir,
             optimization_round=optimization_round,
         )
@@ -283,11 +270,17 @@ def main() -> None:
         # Use underlying_model for sampling to ensure consistency (compiled models may have issues with generation)
         # The generator will automatically set the model to eval mode during sampling
         sampling_model = trainer.underlying_model
-        oracle = partial(oracle_fn, tokenizer=tokenizer, target=args.target, model=sampling_model, model_device=args.device)
+        oracle = partial(
+            oracle_fn,
+            tokenizer=tokenizer,
+            target_transforms=offline_dataset.target_transforms,
+            model=sampling_model,
+            model_device=args.device,
+        )
         _sampled_solutions = sample_new_solutions(
             tokenizer=tokenizer,
             model=sampling_model,
-            advantage_fn=lambda x: x,
+            advantage_fn=lambda x: x, # try x ** 3
             oracle=oracle,
             device=args.device,
             num_samples=args.batch_size,
@@ -302,6 +295,7 @@ def main() -> None:
         )
         logger.info(f"Sampled {len(_sampled_solutions)} solutions")
         solutions.extend(_sampled_solutions)
+        solutions = list(set(solutions))
         
         # 5. Add new solutions to the offline dataset
         #offline_dataset.append(sequences=_sampled_solutions, targets=_sampled_objective_values.tolist())

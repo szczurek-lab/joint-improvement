@@ -2,20 +2,24 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import numpy as np
 import torch
 
 from joint_improvement.utils.chemistry import calculate_validity, has_radicals
+from joint_improvement.utils.data.target_transforms import ZScoreScaler
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
     from joint_improvement.tokenizers.smiles import SMILESTokenizer
 
+from experiments.offline_optimization.helpers import manual_docking_target_transform
+
 
 def oracle_fn(
     input_idx: torch.Tensor,
     tokenizer: SMILESTokenizer,
-    target: str,
+    target_transforms: list[ZScoreScaler],
     model: torch.nn.Module,
     model_device: torch.device,
 ) -> float:
@@ -27,10 +31,12 @@ def oracle_fn(
 
     input_idx = input_idx.unsqueeze(0).to(model_device)
     attention_mask = torch.ones_like(input_idx).to(model_device)
-    ds_pred = model.predict(input_ids=input_idx, attention_mask=attention_mask)[:, 0].item()
-    sa_pred = model.predict(input_ids=input_idx, attention_mask=attention_mask)[:, 1].item()
-    qed_pred = model.predict(input_ids=input_idx, attention_mask=attention_mask)[:, 2].item()
-    return ds_pred * sa_pred * qed_pred
+    predictions = model.predict(input_ids=input_idx, attention_mask=attention_mask).detach().cpu()
+    for target_transform in target_transforms:
+        predictions = target_transform.inverse_transform(predictions)
+
+    predictions = manual_docking_target_transform(predictions)  # normalize to [0, 1] for hv computation
+    return np.prod(predictions).item()
 
 
 def sample_new_solutions(
