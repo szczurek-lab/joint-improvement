@@ -101,9 +101,12 @@ class QuickVina2_GPU(OracleComponent):
         Execute QuickVina2-GPU-2.1 as a subprocess.
         """
         # 1. Make temporary files to store the input and output
-        temp_input_sdf_dir = tempfile.mkdtemp()
-        temp_input_pdbqt_dir = tempfile.mkdtemp()
-        temp_output_dir = tempfile.mkdtemp()
+        # Use local temp directory to avoid Lustre I/O overhead
+        # Prefer /dev/shm (RAM disk) if available, otherwise /tmp
+        local_temp_base = "/dev/shm" if os.path.exists("/dev/shm") else "/tmp"
+        temp_input_sdf_dir = tempfile.mkdtemp(dir=local_temp_base)
+        temp_input_pdbqt_dir = tempfile.mkdtemp(dir=local_temp_base)
+        temp_output_dir = tempfile.mkdtemp(dir=local_temp_base)
 
         env = self._build_subprocess_env()
 
@@ -202,13 +205,18 @@ class QuickVina2_GPU(OracleComponent):
             print(f"[QuickVina2_GPU] docking stdout:\n{docking_proc.stdout}")
             print(f"[QuickVina2_GPU] docking stderr:\n{docking_proc.stderr}")
         if self.raise_on_failure and docking_proc.returncode != 0:
-            raise RuntimeError(
+            error_msg = (
                 "QuickVina2-GPU docking failed.\n"
                 f"returncode={docking_proc.returncode}\n"
                 f"cwd={binary_dir}\n"
-                f"stdout:\n{docking_proc.stdout}\n"
-                f"stderr:\n{docking_proc.stderr}\n"
             )
+            if "CL_OUT_OF_HOST_MEMORY" in docking_proc.stdout or "CL_OUT_OF_HOST_MEMORY" in docking_proc.stderr:
+                error_msg += (
+                    "\nGPU/OpenCL out of memory error detected. "
+                    "Try reducing the batch size or freeing GPU memory.\n"
+                )
+            error_msg += f"stdout:\n{docking_proc.stdout}\nstderr:\n{docking_proc.stderr}\n"
+            raise RuntimeError(error_msg)
 
         # 7. Copy and save the docking output
         # NOTE: copy the *contents* of the temp output dir, not the temp dir name (avoids results_*/tmpXXXX/ nesting).

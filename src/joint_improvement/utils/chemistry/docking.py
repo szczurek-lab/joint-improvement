@@ -101,7 +101,10 @@ def _make_gpu_predictor(target: str) -> _DockingPredictor:
     cpu = DockingVina(target)
 
     binary = _get_quickvina2_gpu_binary()
-    results_dir = tempfile.mkdtemp(prefix=f"quickvina2_gpu_{target}_")
+    # Use local temp directory to avoid Lustre I/O overhead
+    # Prefer /dev/shm (RAM disk) if available, otherwise /tmp
+    local_temp_base = "/dev/shm" if os.path.exists("/dev/shm") else "/tmp"
+    results_dir = tempfile.mkdtemp(prefix=f"quickvina2_gpu_{target}_", dir=local_temp_base)
     atexit.register(shutil.rmtree, results_dir, ignore_errors=True)
     thread = int(os.environ.get("QUICKVINA2_GPU_THREAD", os.environ.get("QVINA_GPU_THREAD", "5000")))
 
@@ -117,7 +120,7 @@ def _make_gpu_predictor(target: str) -> _DockingPredictor:
             # Sampling effort (QuickVina2-GPU calls this `--thread`)
             "thread": thread,
             "verbose": False,
-            "raise_on_failure": False,
+            "raise_on_failure": True,
         },
     )
 
@@ -216,7 +219,10 @@ def calculate_docking(smiles: str, target: str = "fa7", device: str = "cpu") -> 
             return float("nan")
 
         return float(scores[0])
-    except Exception:
+    except Exception as e:
+        # Re-raise ImportError and ValueError to surface configuration issues
+        if isinstance(e, (ImportError, ValueError)):
+            raise
         return float("nan")
 
 
