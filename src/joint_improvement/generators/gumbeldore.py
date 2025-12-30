@@ -14,6 +14,7 @@ import functools
 import logging
 from typing import TYPE_CHECKING, Any, TypeAlias
 
+import numpy as np
 import torch
 
 from .generator import GeneratorMixin
@@ -21,8 +22,6 @@ from .utils.gumbeldore.incremental_sbs import IncrementalSBS
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-
-    import numpy as np
 
     from joint_improvement.hyformer.model import Hyformer
 
@@ -113,6 +112,7 @@ class GumbeldoreMixin(GeneratorMixin):
         advantage_constant: float = 1.0,
         normalize_advantage_value: bool = True,
         min_nucleus_top_p: float = 1.0,
+        rng: np.random.Generator | None = None,
     ) -> torch.FloatTensor:
         """Generate sequences using incremental stochastic beam search.
 
@@ -150,6 +150,9 @@ class GumbeldoreMixin(GeneratorMixin):
             Min-max normalize advantage values, to set the highest/lowest advantage to 1/-1.
         min_nucleus_top_p : float
             Minimum nucleus (top-p) sampling parameter.
+        rng : np.random.Generator | None, default=None
+            NumPy random number generator for reproducible sampling. If None, uses the global
+            NumPy random state (default).
 
         Returns
         -------
@@ -166,6 +169,12 @@ class GumbeldoreMixin(GeneratorMixin):
         Notes
         -----
         Requires a `_get_model_logits` method to be implemented in the class.
+
+        Examples
+        --------
+        >>> # Reproducible sampling with seed
+        >>> rng = np.random.default_rng(42)
+        >>> samples = model.generate(..., rng=rng)
         """
         # Ensure model is in eval mode for inference
         was_training = self.training
@@ -201,6 +210,7 @@ class GumbeldoreMixin(GeneratorMixin):
                 perform_first_round_deterministic=False,
                 min_nucleus_top_p=min_nucleus_top_p,
                 return_round_info=False,
+                rng=rng,
             )
 
             generated = self._cast_incremental_sbs_result(result)

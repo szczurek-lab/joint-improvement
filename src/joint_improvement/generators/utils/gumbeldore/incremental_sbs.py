@@ -282,6 +282,7 @@ class IncrementalSBS:
         perform_first_round_deterministic: bool = False,
         min_nucleus_top_p: float = 1.0,
         return_round_info: bool = False,
+        rng: np.random.Generator | None = None,
     ) -> list[list[sbs.BeamLeaf]]:
         """
         Performs incremental SBS with the given type of updating the log-probs. Note that the trie and all log-prob updates
@@ -335,6 +336,7 @@ class IncrementalSBS:
                 beam_width=beam_width,
                 deterministic=is_deterministic_round,
                 top_p=1 if is_deterministic_round else top_p_round,
+                rng=rng,
             )
 
             # Update probabilities and remove _TrieNode parts of the leaves.

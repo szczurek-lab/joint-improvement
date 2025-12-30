@@ -227,7 +227,8 @@ class IncrementalSBS:
                                 deterministic: bool = False,
                                 nucleus_top_p: float = 1.,
                                 replan_steps: int = 10,
-                                sbs_keep_intermediate: bool = False
+                                sbs_keep_intermediate: bool = False,
+                                rng: np.random.Generator | None = None,
                                 ) -> List[List[sbs.BeamLeaf]]:
 
         best_leaf_batch: List[Optional[sbs.BeamLeaf]] = [None] * len(self.root_nodes)  # carries the best leaves
@@ -259,7 +260,8 @@ class IncrementalSBS:
                     beam_width=beam_width,
                     deterministic=deterministic,
                     top_p=1 if deterministic else nucleus_top_p,
-                    keep_intermediate=sbs_keep_intermediate
+                    keep_intermediate=sbs_keep_intermediate,
+                    rng=rng,
                 )
                 deterministic = False
             else:
@@ -323,7 +325,8 @@ class IncrementalSBS:
 
     def perform_incremental_sbs(self, beam_width: int, num_rounds: int, nucleus_top_p: float = 1.,
                                 sbs_keep_intermediate: bool = False,
-                                best_objective: Optional[float] = None) -> List[List[sbs.BeamLeaf]]:
+                                best_objective: Optional[float] = None,
+                                rng: np.random.Generator | None = None) -> List[List[sbs.BeamLeaf]]:
         """
         Performs incremental SBS with the given type of updating the log-probs. Note that the trie and all log-prob updates
         persist, so calling the method multiple times will not reset the trie.
@@ -360,7 +363,8 @@ class IncrementalSBS:
                 beam_width=beam_width,
                 deterministic=False,
                 top_p=nucleus_top_p,
-                keep_intermediate=sbs_keep_intermediate
+                keep_intermediate=sbs_keep_intermediate,
+                rng=rng,
             )
 
             # Update probabilities and remove _TrieNode parts of the leaves.

@@ -14,6 +14,7 @@ import functools
 import logging
 from typing import TYPE_CHECKING, Any, TypeAlias
 
+import numpy as np
 import torch
 
 from .generator import GeneratorMixin
@@ -21,8 +22,6 @@ from .utils.tasar.incremental_sbs import IncrementalSBS
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-
-    import numpy as np
 
     from joint_improvement.hyformer.model import Hyformer
 
@@ -99,43 +98,6 @@ class TasarMixin(GeneratorMixin):
             memory_aggressive=False,
         )
 
-    def generate_batch(
-        self,
-        num_samples: int,
-        prefix_input_ids: torch.LongTensor,
-        advantage_fn: Callable[[float], float],
-        eos_token_id: int,
-        oracle_fn: Callable[[StateTensor], float] | None = None,
-        temperature: float = 1.0,
-        top_k: int | None = None,
-        beam_width: int = 32,
-        nucleus_top_p: float = 1.0,
-        max_sequence_length: int = 128,
-        deterministic: bool = False,
-        replan_steps: int = 10,
-        filter_fn: Callable[[list[str]], list[str]] | None = None,
-    ) -> torch.FloatTensor:
-        """Generate multiple sequences using Tasar."""
-        generated_sequences: list[torch.LongTensor] = []
-        while len(generated_sequences) < num_samples:
-            new_sequences = self.generate(
-                prefix_input_ids=prefix_input_ids,
-                advantage_fn=advantage_fn,
-                eos_token_id=eos_token_id,
-                oracle_fn=oracle_fn,
-                temperature=temperature,
-                top_k=top_k,
-                beam_width=beam_width,
-                nucleus_top_p=nucleus_top_p,
-                max_sequence_length=max_sequence_length,
-                deterministic=deterministic,
-                replan_steps=replan_steps,
-            )
-            if filter_fn is not None:
-                new_sequences = filter_fn(new_sequences)
-            generated_sequences.extend(new_sequences)
-        return generated_sequences[:num_samples]
-
     def generate(
         self,
         prefix_input_ids: torch.LongTensor,
@@ -149,6 +111,7 @@ class TasarMixin(GeneratorMixin):
         max_sequence_length: int = 128,
         deterministic: bool = False,
         replan_steps: int = 10,
+        rng: np.random.Generator | None = None,
     ) -> torch.FloatTensor:
         """Generate sequences using incremental stochastic beam search.
 
@@ -182,6 +145,9 @@ class TasarMixin(GeneratorMixin):
             Minimum nucleus (top-p) sampling parameter.
         replan_steps : int
             Number of SBS rounds, where we update the log-probs after each round.
+        rng : np.random.Generator | None, default=None
+            NumPy random number generator for reproducible sampling. If None, uses the global
+            NumPy random state (default).
 
         Returns
         -------
@@ -198,6 +164,12 @@ class TasarMixin(GeneratorMixin):
         Notes
         -----
         Requires a `_get_model_logits` method to be implemented in the class.
+
+        Examples
+        --------
+        >>> # Reproducible sampling with seed
+        >>> rng = np.random.default_rng(42)
+        >>> samples = model.generate(..., rng=rng)
         """
         # Ensure model is in eval mode for inference
         was_training = self.training
@@ -222,7 +194,7 @@ class TasarMixin(GeneratorMixin):
             )
 
             result = _sampler.perform_tasar(
-                beam_width=beam_width, nucleus_top_p=nucleus_top_p, replan_steps=replan_steps, deterministic=deterministic
+                beam_width=beam_width, nucleus_top_p=nucleus_top_p, replan_steps=replan_steps, deterministic=deterministic, rng=rng
             )
 
             generated = self._cast_tasar_result(result)

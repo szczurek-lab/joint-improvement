@@ -19,18 +19,22 @@ BeamLeaf = typing.NamedTuple("BeamLeaf", [("state", State),
                                           ])
 
 
-def sample_gumbels_with_maximum(log_probabilities: np.array, target_max: float):
+def sample_gumbels_with_maximum(log_probabilities: np.array, target_max: float, rng: np.random.Generator | None = None):
     """Samples a set of gumbels which are conditioned on having a given maximum.
     Based on https://gist.github.com/wouterkool/a3bb2aae8d6a80f985daae95252a8aa8.
 
     Parameters:
         log_probabilities [np.array]: The log probabilities of the items to sample Gumbels for.
         target_max [float]: The desired maximum sampled Gumbel.
+        rng [np.random.Generator | None]: Optional NumPy random number generator for reproducible sampling.
+            If None, uses the global NumPy random state.
 
     Returns:
         [np.array] The sampled Gumbels as np.array of same length as `log_probabilities`
     """
-    gumbels = np.random.gumbel(loc=log_probabilities)
+    if rng is None:
+        rng = np.random.default_rng()
+    gumbels = rng.gumbel(loc=log_probabilities)
     max_gumbel = np.max(gumbels)
 
     # Use equations (23) and (24) in Appendix B.3 of the SBS paper.
@@ -73,7 +77,8 @@ def stochastic_beam_search(
         beam_width: int,
         deterministic: bool = False,
         top_p: Union[float, Tuple[float, int, float]] = 0.0,
-        keep_intermediate: bool = False
+        keep_intermediate: bool = False,
+        rng: np.random.Generator | None = None,
 ) -> List[List[BeamLeaf]]:
     """Stochastic Beam Search, applied to a batch of states (for higher network throughput).
 
@@ -179,7 +184,7 @@ def stochastic_beam_search(
                 if deterministic:
                     gumbels = log_probabilities
                 else:
-                    gumbels = sample_gumbels_with_maximum(log_probabilities, node_gumbel)
+                    gumbels = sample_gumbels_with_maximum(log_probabilities, node_gumbel, rng=rng)
 
                 all_log_probs.extend(log_probabilities)
                 all_gumbels.extend(gumbels)
