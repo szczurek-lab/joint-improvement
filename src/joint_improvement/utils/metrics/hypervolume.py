@@ -238,12 +238,12 @@ def calculate_hypervolume(
     normalized_qed_scores: np.ndarray | Sequence[float],
     normalized_sa_scores: np.ndarray | Sequence[float],
     normalized_docking_scores: np.ndarray | Sequence[float],
-    sampled_sequences: np.ndarray | Sequence[str],
+    sampled_sequences: np.ndarray | Sequence[str] | None = None,
 ) -> tuple[float, float]:
     all_score = np.stack([normalized_qed_scores, normalized_sa_scores, normalized_docking_scores], axis=1)  # (N, 3)
 
     # 3) (Optional) keep track of SMILES, as in Oracle.input_offline_data
-    smiles = np.asarray(sampled_sequences)  # shape [N]
+    smiles = np.asarray(sampled_sequences) if sampled_sequences is not None else None # shape [N]
 
     # 4) Get Pareto front and hypervolume
     candidates, pareto_rewards = get_pareto_fronts(smiles, all_score)  # pareto_rewards: [P, 3]

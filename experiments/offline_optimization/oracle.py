@@ -11,7 +11,7 @@ from joint_improvement.utils.chemistry import (
 )
 
 
-def oracle_call(solutions: list[str], target: str) -> np.ndarray:
+def oracle_call(solutions: list[str], target: str, device: torch.device) -> np.ndarray:
     """Call the oracle to evaluate solutions.
     
     Parameters
@@ -26,7 +26,7 @@ def oracle_call(solutions: list[str], target: str) -> np.ndarray:
     np.ndarray
         Array of shape (n_solutions, 3) containing [docking_score, sa, qed] for each solution.
     """
-    ds = calculate_docking_batch(solutions, target=target)
+    ds = calculate_docking_batch(solutions, target=target, device=device)
     sa = calculate_sa_batch(solutions)
     qed = calculate_qed_batch(solutions)
     return np.concatenate([ds.reshape(-1, 1), sa.reshape(-1, 1), qed.reshape(-1, 1)], axis=1)

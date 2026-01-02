@@ -63,6 +63,18 @@ def build_parser() -> argparse.ArgumentParser:
         default=1500,
         help="Size of the dataset to build (default: 1500).",
     )
+    parser.add_argument(
+        "--device",
+        type=str,
+        default="cpu",
+        help="Device to use for docking calculations (default: cpu).",
+    )
+    parser.add_argument(
+        "--quickvina2-gpu-binary",
+        type=str,
+        default=os.environ.get("QUICKVINA2_GPU_BINARY", None),
+        help="Path to QuickVina2-GPU binary (default: environment variable QUICKVINA2_GPU_BINARY).",
+    )
     return parser
 
 
@@ -70,7 +82,16 @@ def main() -> None:
     """Main training function."""
     parser = build_parser()
     args = parser.parse_args()
-
+    
+    if args.device == "gpu" and args.quickvina2_gpu_binary is not None:
+        os.environ["QUICKVINA2_GPU_BINARY"] = args.quickvina2_gpu_binary    
+    if args.device == "gpu" and os.path.exists("/dev/shm"):
+        os.environ["TMPDIR"] = "/dev/shm"
+    elif args.device == "gpu":
+        os.environ["TMPDIR"] = "/tmp"
+    else:
+        pass
+    
     set_seed(args.seed, deterministic=False)
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -87,7 +108,7 @@ def main() -> None:
         qed = np.asarray(calculate_qed_batch(sequences), dtype=np.float32)
         sa = np.asarray(calculate_sa_batch(sequences), dtype=np.float32)
         docking = np.asarray(
-            calculate_docking_batch(sequences, target=args.target, device="cpu"),
+            calculate_docking_batch(sequences, target=args.target, device=args.device),
             dtype=np.float32,
         )
 

@@ -49,8 +49,8 @@ class TrainerConfig(BaseConfig):
         Example: {"task_1": 1.0, "task_2": 0.5}.
     """
 
-    batch_size: int = 512
-    learning_rate: float = 3e-4
+    batch_size: int
+    learning_rate: float
     weight_decay: float = 0.1
     beta1: float = 0.9
     beta2: float = 0.95
@@ -59,7 +59,7 @@ class TrainerConfig(BaseConfig):
     warmup_ratio: float = 0.05
     min_lr: float = 1e-5
     decay_lr: bool = True
-    dtype: str = "bfloat16"
+    dtype: str = "float32"
     compile: bool = False
     patience: int | None = None  # Early stopping patience (None = no early stopping)
     log_every_n_iterations: int | None = (
@@ -422,17 +422,10 @@ class MultiTaskTrainer(TrainerCheckpointMixin):
     def _infer_total_num_iters(
         self, train_loaders: dict[str, DataLoader]
     ) -> tuple[int, int]:
-        """Calculate total iterations: batches_per_epoch = Σ(prob_i × length_i)."""
-        task_names = list(train_loaders.keys())
-        task_probs = self.task_sampler.get_task_probs(task_names)
+        """Calculate total iterations: batches_per_epoch = min(len(loader_i))."""
         batches_per_epoch = max(
             1,
-            round(
-                sum(
-                    task_probs[task] * len(loader)
-                    for task, loader in train_loaders.items()
-                )
-            ),
+            min(len(loader) for loader in train_loaders.values())
         )
         return self.config.max_epochs * batches_per_epoch, batches_per_epoch
 
@@ -582,3 +575,4 @@ class MultiTaskTrainer(TrainerCheckpointMixin):
                 self.model.load_pretrained(
                     best_model_path, device=self.device, strict=True
                 )
+                

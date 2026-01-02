@@ -9,6 +9,7 @@ from .experiments import (
     save_configs,
     validate_paths,
 )
+from .memory import free_gpu_memory, move_model_to_device
 from .reproducibility import get_generator, set_seed
 
 __all__ = [
@@ -24,4 +25,6 @@ __all__ = [
     "create_task_dataloaders",
     "save_configs",
     "validate_paths",
+    "free_gpu_memory",
+    "move_model_to_device",
 ]

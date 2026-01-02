@@ -242,7 +242,7 @@ def main() -> None:
         # 4. Sample new solutions
         model.eval()
         oracle = partial(oracle_fn, tokenizer=tokenizer, target=args.target, model=model, model_device=args.device)
-        _sampled_solutions = sample_new_solutions(
+        _sampled_solutions_with_scores = sample_new_solutions(
             tokenizer=tokenizer,
             model=model,
             advantage_fn=lambda x: x,
@@ -257,8 +257,12 @@ def main() -> None:
             advantage_constant=1.0,
             normalize_advantage_value=True,
             min_nucleus_top_p=0.95,
+            target_transforms=offline_dataset.target_transforms,
         )
-        logger.info(f"Sampled {len(_sampled_solutions)} solutions")
+        logger.info(f"Sampled {len(_sampled_solutions_with_scores)} solutions")
+
+        # Extract SMILES from tuples for oracle call
+        _sampled_solutions = [smiles for smiles, _ in _sampled_solutions_with_scores]
 
         # 5. Oracle call and update offline dataset
         _sampled_objective_values = oracle_call(_sampled_solutions, target=args.target)
